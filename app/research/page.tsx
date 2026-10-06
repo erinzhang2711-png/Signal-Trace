@@ -57,8 +57,14 @@ function ResearchWorkspace() {
         body: JSON.stringify({ currentState: "待人工核验", currentConclusion: "尚未建立正式事件结论，需基于可追溯证据创建草案。", task }),
       });
       const data = (await response.json()) as { run?: AgentRun; error?: string };
-      if (!response.ok || !data.run) throw new Error(data.error || "Agent 监测没有返回运行记录");
-      setRun(data.run);
+      // A failed Agent run is still a valid, user-actionable result: render its
+      // safe stop reason instead of discarding it solely because the HTTP status is 5xx.
+      if (data.run) {
+        setRun(data.run);
+        return;
+      }
+      if (!response.ok) throw new Error(data.error || "Agent 监测服务暂不可用，请稍后重试。");
+      throw new Error(data.error || "Agent 监测没有返回运行记录");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Agent 监测失败");
     } finally {
