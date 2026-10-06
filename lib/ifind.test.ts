@@ -73,4 +73,25 @@ describe("MCP candidate evidence extraction", () => {
       sourceLabel: "iFinD 原始检索片段 · 待补原文链接",
     });
   });
+
+  it("maps iFinD Chinese news fields into a readable candidate with its direct link", () => {
+    const output = JSON.stringify({ data: [{
+      "资讯标题": "宁德时代收购耀宁新能源资产",
+      "资讯内容": "重庆耀宁新能源相关资产将由宁德时代收购，交易仍需关注后续披露。",
+      "日期": "2026-09-14",
+      "URL": "https://mp.weixin.qq.com/s/example",
+      "资讯来源": "财经媒体",
+    }] });
+    const evidence = extractMcpEvidence(output, "search_related_news", {
+      companyQuery: "宁德时代",
+      eventQuery: "收购耀宁",
+      cutoffDate: "2026-10-06",
+    }, "2026-10-06T00:00:00.000Z");
+
+    expect(evidence[0]).toMatchObject({
+      title: "宁德时代收购耀宁新能源资产",
+      sourceUrl: "https://mp.weixin.qq.com/s/example",
+      publisher: "财经媒体",
+    });
+  });
 });

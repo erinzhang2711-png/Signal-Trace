@@ -68,11 +68,11 @@ function resultExcerpt(output: string) {
 
 type UnknownRecord = Record<string, unknown>;
 
-const TITLE_KEYS = ["title", "headline", "name", "notice_title", "news_title", "标题", "公告标题", "新闻标题"];
+const TITLE_KEYS = ["title", "headline", "name", "notice_title", "news_title", "标题", "公告标题", "新闻标题", "资讯标题", "公告名称"];
 const DATE_KEYS = ["date", "publish_date", "pub_date", "publishdate", "publishtime", "time", "日期", "发布时间", "披露日期", "公告日期"];
 const URL_KEYS = ["url", "link", "source_url", "news_url", "notice_url", "原文链接", "链接", "网址"];
-const PUBLISHER_KEYS = ["source", "publisher", "media", "author", "来源", "发布方", "媒体"];
-const BODY_KEYS = ["summary", "content", "abstract", "description", "text", "正文", "摘要", "内容", "简介"];
+const PUBLISHER_KEYS = ["source", "publisher", "media", "author", "来源", "发布方", "媒体", "资讯来源", "来源名称"];
+const BODY_KEYS = ["summary", "content", "abstract", "description", "text", "正文", "摘要", "内容", "简介", "资讯内容", "公告片段内容", "内容摘要"];
 
 function recordValue(record: UnknownRecord, keys: string[]) {
   const normalized = new Map(Object.entries(record).map(([key, value]) => [key.toLowerCase(), value]));
