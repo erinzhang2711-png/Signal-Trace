@@ -163,7 +163,7 @@ export default function Home() {
     return (
       <main>
         <header className="topbar">
-          <div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div>
+          <div className="topbar-left"><div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div>{taskRun && <button className="topbar-start" onClick={() => setTaskRun(null)}>← 返回研究表单</button>}</div>
           <div className="topbar-meta">金融事件证据 Agent <span className="divider" /> 不构成投资建议</div>
         </header>
         <section className="research-hero">
