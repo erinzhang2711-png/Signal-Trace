@@ -290,7 +290,7 @@ function ResearchTimeline({ task, evidence }: { task: ResearchTask; evidence: Ev
   const ordered = [...evidence].sort((left, right) => (left.disclosedAt || "9999-12-31").localeCompare(right.disclosedAt || "9999-12-31"));
   return <section className="research-timeline panel">
     <div className="timeline-header"><div><div className="panel-label">候选证据时间线</div><h2>{task.companyQuery} · {task.eventQuery}</h2></div><span>{ordered.length} 条从 MCP 提取的候选证据</span></div>
-    {ordered.length === 0 ? <div className="timeline-empty">本次 MCP 返回没有可安全结构化的证据节点。运行记录已保留；请调整关键词或历史截点后重试。</div> : <div className="research-timeline-list">{ordered.map((item) => <article className="research-timeline-item" key={item.id}>
+    {ordered.length === 0 ? <div className="timeline-empty">本次 MCP 返回没有可安全结构化的同一事件证据节点。请在事件关键词中补充交易对手、标的或事件名称，例如“收购 ××公司”，再重试。</div> : <div className="research-timeline-list">{ordered.map((item) => <article className="research-timeline-item" key={item.id}>
       <div className="research-date"><b>{item.disclosedAt || "日期待核验"}</b><span>{item.sourceTier}</span></div>
       <div className="research-timeline-copy"><div><span className="kind-tag">{item.contentKind}</span>{item.statusEffect && <span className={`status-mini ${stateTone[item.statusEffect]}`}>{item.statusEffect}</span>}</div><h3>{item.title}</h3><p>{item.summary || "该条材料仅保留了标题与原文片段。"}</p>{item.quote && <blockquote>“{item.quote}”</blockquote>}<small>{item.publisher} · {item.sourceLabel || "待补原文链接"}</small>{item.sourceUrl ? <a href={item.sourceUrl} target="_blank" rel="noreferrer">打开原始来源 ↗</a> : <em>未提供可直达原文，不能写入正式结论</em>}</div>
     </article>)}</div>}

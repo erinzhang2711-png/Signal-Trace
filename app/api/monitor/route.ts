@@ -206,10 +206,21 @@ export async function POST(request: Request) {
       result = JSON.parse(output) as Record<string, unknown>;
     }
 
-    const proposal = proposalFrom(result);
+    const extractedEvidence = evidenceFrom(payload.data.task, result);
+    const proposal = extractedEvidence.length === 0 ? {
+      ...proposalFrom(result),
+      proposedState: "待人工核验" as const,
+      confidence: "低" as const,
+      claim: "当前检索未提取到可用于构建同一事件时间线的候选证据。",
+      quote: "",
+      conflict: "检索词过于宽泛，或 MCP 返回材料未包含可核验的同一事件节点。",
+      rationale: "未获得可追溯的事件证据，不建立或升级任何正式结论。",
+      requiresReview: true,
+      suggestedConclusion: "未识别到可建立时间线的同一事件证据；请补充交易对手、标的或事件名称后重试。",
+    } : proposalFrom(result);
     const decision = result.decision as string;
-    const status: AgentRun["status"] = decision === "无状态变化" ? "无状态变化" : decision === "待人工核验" || proposal.requiresReview ? "待人工核验" : "待用户确认";
-    const run: AgentRun = { id: `run-${Date.now()}`, status, startedAt, endedAt: new Date().toISOString(), stopReason: (result.stopReason as string) || "已完成有限工具调用。", toolCalls: traces, proposal, evidence: evidenceFrom(payload.data.task, result) };
+    const status: AgentRun["status"] = extractedEvidence.length === 0 || decision === "待人工核验" || proposal.requiresReview ? "待人工核验" : decision === "无状态变化" ? "无状态变化" : "待用户确认";
+    const run: AgentRun = { id: `run-${Date.now()}`, status, startedAt, endedAt: new Date().toISOString(), stopReason: extractedEvidence.length === 0 ? "未提取到可构建同一事件时间线的证据节点。" : (result.stopReason as string) || "已完成有限工具调用。", toolCalls: traces, proposal, evidence: extractedEvidence };
     return NextResponse.json({ run });
   } catch {
     const run = failedRun(startedAt, traces, "Agent 或 MCP 服务暂不可用；没有生成或写入任何正式结论。");
