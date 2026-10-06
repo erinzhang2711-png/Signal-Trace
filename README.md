@@ -2,6 +2,18 @@
 
 一个面向个人投研者的投资事件证据 Agent MVP。它不预测涨跌、不提供买卖建议；它的作用是把事件结论、版本变化和原始证据放在同一个可追溯工作台中。
 
+## 交付物
+
+| 题目要求 | 交付位置 | 状态 |
+| --- | --- | --- |
+| 可访问 Web 产品 | [SignalTrace 生产站点](https://signal-trace-eight.vercel.app) | 已部署 |
+| 源码仓库与 README | [GitHub 仓库](https://github.com/erinzhang2711-png/Signal-Trace) | 已提交 |
+| AI 使用与验证记录 | [docs/AI_USAGE_AND_VALIDATION.md](docs/AI_USAGE_AND_VALIDATION.md) | 已提交 |
+| 主链路、异常与合规测试说明 | [docs/TESTING.md](docs/TESTING.md) | 已提交 |
+| 60–180 秒演示视频 | [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | 按脚本录制后上传 |
+
+录制和最终提交前，请按 [提交清单](docs/SUBMISSION_CHECKLIST.md) 逐项核对。
+
 ## 演示场景
 
 默认首页从一条研究任务开始：输入公司/标的、事件关键词与历史截点，Agent 再调用 iFinD MCP 进行有限检索。**海光信息拟换股吸收合并中科曙光** 被保留为可复现的完整案例演示，数据快照截点为 **2025-09-06**。
@@ -52,10 +64,15 @@ npm run dev
 
 ## 环境变量
 
+任选一种模型提供方；两组模型变量不要同时配置。iFinD 变量仅在使用泛研究监测时需要。
+
 | 名称 | 必需 | 用途 |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | 是（Agent 规划与草案） | 仅由服务端 Route Handler 使用 |
+| `OPENAI_API_KEY` | OpenAI 路径需要 | 仅由服务端 Route Handler 使用 |
 | `OPENAI_MODEL` | 否 | 默认为 `gpt-5-mini`，需支持 Structured Outputs |
+| `HKUST_GENAI_API_KEY` | 学校网关路径需要 | 学校网关 Key |
+| `AZURE_ENDPOINT` | 学校网关路径需要 | 学校提供的 OpenAI 兼容 endpoint |
+| `AZURE_CHAT_DEPLOYMENT` | 学校网关路径需要 | 学校提供的 Chat deployment 名称 |
 | `IFIND_MCP_TOKEN` | 是（iFinD 监测） | 仅由服务端 MCP 客户端使用 |
 | `IFIND_NEWS_MCP_URL` | 是（iFinD 监测） | 新闻公告 MCP 的 Streamable HTTP 地址 |
 | `IFIND_STOCK_MCP_URL` | 是（iFinD 监测） | A股数据 MCP 的 Streamable HTTP 地址 |
@@ -74,6 +91,7 @@ npm run build
 
 - 监测的是固定历史区间，不是实时盯盘；定时触发、账号体系、云端持久化和真实推送尚未实现。
 - 导入内容在浏览器本地存储中保存，刷新后可恢复，但不跨设备同步。
+- 当前学校网关在生产验证中返回 HTTP 400，不接受 function calling；因此泛事件的 MCP 监测会明确停止并提示原因，不会伪造检索结果。固定案例不依赖该网关，仍可完整复现。
 - 仅覆盖一个固定历史事件的完整版本演化；全市场自动事件聚类、后台调度，以及“更正/过期”材料的端到端交互仍是后续能力。
 - 首版以固定历史案例呈现正式版本演化；传闻、观点与缺失原文的材料只会停留在候选核验队列，不会被伪造成正式版本。
 - 该产品仅做信息证据治理，不构成证券投资咨询或交易建议。
