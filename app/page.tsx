@@ -45,7 +45,6 @@ export default function Home() {
   const [monitoring, setMonitoring] = useState(false);
   const [mode, setMode] = useState<"start" | "demo">("start");
   const [task, setTask] = useState<ResearchTask>(EMPTY_TASK);
-  const [taskRun, setTaskRun] = useState<AgentRun | null>(null);
 
   useEffect(() => {
     const saved = window.localStorage.getItem(STORAGE_KEY);
@@ -94,7 +93,7 @@ export default function Home() {
     }
   }
 
-  async function monitor(researchTask: ResearchTask, isDemo = false) {
+  async function monitorDemo() {
     setError(null);
     setMonitoring(true);
     try {
@@ -102,15 +101,14 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          currentState: isDemo ? current.state : "待人工核验",
-          currentConclusion: isDemo ? current.conclusion : "尚未建立正式事件结论，需基于可追溯证据创建草案。",
-          task: researchTask,
+          currentState: current.state,
+          currentConclusion: current.conclusion,
+          task: DEMO_TASK,
         }),
       });
       const data = (await response.json()) as { run?: AgentRun; error?: string };
       if (!data.run) throw new Error(data.error || "监测没有返回运行记录");
-      if (isDemo) setAgentRuns((runs) => [data.run!, ...runs].slice(0, 5));
-      else setTaskRun(data.run);
+      setAgentRuns((runs) => [data.run!, ...runs].slice(0, 5));
       setNotice(data.run.status === "待用户确认" ? "Agent 已完成 iFinD 数据核查并生成草案；仍需补齐可直达原文后才能写入正式时间线。" : `本次监测已停止：${data.run.stopReason}`);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Agent 监测失败");
@@ -139,7 +137,6 @@ export default function Home() {
 
   function returnToResearchStart() {
     setMode("start");
-    setTaskRun(null);
     setError(null);
     setNotice(null);
   }
@@ -193,7 +190,7 @@ export default function Home() {
     return (
       <main>
         <header className="topbar">
-          <div className="topbar-left"><div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div>{taskRun && <button className="topbar-start" onClick={() => setTaskRun(null)}>← 返回研究表单</button>}</div>
+          <div className="topbar-left"><div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div></div>
           <div className="topbar-meta">金融事件证据 Agent <span className="divider" /> 不构成投资建议</div>
         </header>
         <section className="research-hero">
@@ -210,7 +207,6 @@ export default function Home() {
           </div>
           <button className="case-link" onClick={() => setMode("demo")}>查看「海光信息 × 中科曙光」完整案例演示 →</button>
         </section>
-        {taskRun && <section className="execution-section"><div className="section-title"><p className="eyebrow">AGENT EXECUTION TRACE</p><h2>从任务到证据，而不是从回答到结论</h2></div><AgentRunPanel run={taskRun} task={task} /><ResearchTimeline task={task} evidence={taskRun.evidence ?? []} /><div className="next-step"><b>下一步</b><span>候选证据中没有直达原文的材料只能停留在待核验层；补齐权威 URL/正文后才能建立正式结论。</span></div><button className="return-button" onClick={() => setTaskRun(null)}>← 返回研究表单，修改任务后重新运行</button></section>}
       </main>
     );
   }
@@ -279,7 +275,7 @@ export default function Home() {
           <article className="panel monitor-card">
             <div className="panel-heading"><span>Agent 监测运行</span><small>最多 4 次工具调用</small></div>
             <p className="form-note">固定查询 2025.05.01—09.06：公告、新闻、披露事件和历史行情。模型只决定查什么；MCP 返回与状态变更都受规则和人工确认约束。</p>
-            <button className="primary-button" onClick={() => void monitor(DEMO_TASK, true)} disabled={monitoring}>{monitoring ? "正在调用 iFinD 工具…" : "立即监测历史快照"}</button>
+            <button className="primary-button" onClick={() => void monitorDemo()} disabled={monitoring}>{monitoring ? "正在调用 iFinD 工具…" : "立即监测历史快照"}</button>
             {agentRuns[0] && <AgentRunPanel run={agentRuns[0]} task={DEMO_TASK} compact />}
           </article>
 
@@ -315,15 +311,4 @@ function AgentRunPanel({ run, task, compact = false }: { run: AgentRun; task: Re
     {run.toolCalls.map((trace, index) => <div className="run-trace" key={`${run.id}-${trace.tool}`}><b>{index + 1}. {trace.status === "完成" ? "✓" : "!"} {trace.tool}</b><span>{trace.source} · {trace.summary}</span></div>)}
     {run.proposal && <div className="run-proposal"><b>Agent 草案</b><span>{run.proposal.suggestedConclusion}</span>{run.proposal.conflict && <small>冲突：{run.proposal.conflict}</small>}</div>}
   </div>;
-}
-
-function ResearchTimeline({ task, evidence }: { task: ResearchTask; evidence: EvidenceItem[] }) {
-  const ordered = [...evidence].sort((left, right) => (left.disclosedAt || "9999-12-31").localeCompare(right.disclosedAt || "9999-12-31"));
-  return <section className="research-timeline panel">
-    <div className="timeline-header"><div><div className="panel-label">候选证据时间线</div><h2>{task.companyQuery} · {task.eventQuery}</h2></div><span>{ordered.length} 条从 MCP 提取的候选证据</span></div>
-    {ordered.length === 0 ? <div className="timeline-empty">本次 MCP 返回没有可安全结构化的同一事件证据节点。请在事件关键词中补充交易对手、标的或事件名称，例如“收购 ××公司”，再重试。</div> : <div className="research-timeline-list">{ordered.map((item) => <article className="research-timeline-item" key={item.id}>
-      <div className="research-date"><b>{item.disclosedAt || "日期待核验"}</b><span>{item.sourceTier}</span></div>
-      <div className="research-timeline-copy"><div><span className="kind-tag">{item.contentKind}</span>{item.statusEffect && <span className={`status-mini ${stateTone[item.statusEffect]}`}>{item.statusEffect}</span>}</div><h3>{item.title}</h3><p>{item.summary || "该条材料仅保留了标题与原文片段。"}</p>{item.quote && <blockquote>“{item.quote}”</blockquote>}<small>{item.publisher} · {item.sourceLabel || "待补原文链接"}</small>{item.sourceUrl ? <a href={item.sourceUrl} target="_blank" rel="noreferrer">打开原始来源 ↗</a> : <em>未提供可直达原文，不能写入正式结论</em>}</div>
-    </article>)}</div>}
-  </section>;
 }
