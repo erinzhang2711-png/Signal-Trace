@@ -120,6 +120,15 @@ export default function Home() {
       setError("请填写公司/标的与事件关键词，再启动 Agent。");
       return;
     }
+    const taskText = `${task.companyQuery} ${task.eventQuery}`;
+    if (taskText.includes("海光信息") && taskText.includes("中科曙光")) {
+      setTask(DEMO_TASK);
+      setSelected(SEED_EVIDENCE[SEED_EVIDENCE.length - 1]);
+      setError(null);
+      setMode("demo");
+      setNotice("已匹配到内置的可追溯案例：展示截至 2025-09-06 的公告证据时间线。你可在右侧运行 Agent 监测或导入新线索。 ");
+      return;
+    }
     const params = new URLSearchParams({ company: task.companyQuery.trim(), event: task.eventQuery.trim(), cutoff: task.cutoffDate });
     router.push(`/research?${params.toString()}`);
   }

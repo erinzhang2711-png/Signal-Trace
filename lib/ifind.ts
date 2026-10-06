@@ -135,9 +135,47 @@ function isRelevant(task: ResearchTask, text: string) {
   return text.includes(task.companyQuery) && terms.some((term) => text.includes(term));
 }
 
+function toolLabel(tool: AgentToolName) {
+  if (tool === "search_event_notices") return "公告检索";
+  if (tool === "search_related_news") return "新闻检索";
+  if (tool === "get_disclosed_event_context") return "披露事件检索";
+  return "市场背景检索";
+}
+
+function fallbackEvidenceFromText(output: string, tool: AgentToolName, task: ResearchTask, capturedAt: string): EvidenceItem[] {
+  if (!isRelevant(task, output)) return [];
+  const seenDates = new Set<string>();
+  const datePattern = /20\d{2}(?:[-/.]\d{1,2}[-/.]\d{1,2}|年\d{1,2}月\d{1,2}日)/g;
+  return Array.from(output.matchAll(datePattern)).flatMap((match, index) => {
+    const disclosedAt = normalizeDate(match[0]);
+    const excerpt = output.slice(Math.max(0, (match.index ?? 0) - 180), (match.index ?? 0) + 300).replace(/\s+/g, " ").trim();
+    const terms = relevanceTerms(task);
+    const hasLocalSignal = excerpt.includes(task.companyQuery) || terms.some((term) => excerpt.includes(term));
+    if (!disclosedAt || disclosedAt > task.cutoffDate || seenDates.has(disclosedAt) || !hasLocalSignal) return [];
+    seenDates.add(disclosedAt);
+    return [{
+      id: `mcp-raw-${capturedAt}-${index}`,
+      title: `${toolLabel(tool)}候选材料（待核验）`,
+      publisher: "iFinD MCP 原始检索结果",
+      sourceUrl: "",
+      sourceLabel: "iFinD 原始检索片段 · 待补原文链接",
+      sourceTier: "媒体报道" as const,
+      contentKind: "事实" as const,
+      occurredAt: disclosedAt,
+      disclosedAt,
+      capturedAt,
+      updatedAt: capturedAt,
+      quote: "",
+      summary: excerpt.slice(0, 320),
+      impact: "原始检索结果未提供可直达原文；仅作为候选时间线节点，不能改变正式结论。",
+      statusEffect: "待人工核验" as const,
+    }];
+  }).slice(0, 6);
+}
+
 export function extractMcpEvidence(output: string, tool: AgentToolName, task: ResearchTask, capturedAt: string): EvidenceItem[] {
   const seen = new Set<string>();
-  return parsedDocuments(output).flatMap((document) => collectRecords(document)).flatMap((record, index) => {
+  const structured = parsedDocuments(output).flatMap((document) => collectRecords(document)).flatMap((record, index) => {
     const title = recordValue(record, TITLE_KEYS);
     const disclosedAt = normalizeDate(recordValue(record, DATE_KEYS));
     const body = recordValue(record, BODY_KEYS);
@@ -168,6 +206,7 @@ export function extractMcpEvidence(output: string, tool: AgentToolName, task: Re
       statusEffect: "待人工核验" as const,
     }];
   });
+  return structured.length > 0 ? structured : fallbackEvidenceFromText(output, tool, task, capturedAt);
 }
 
 export async function runIFindTool(tool: AgentToolName, task: ResearchTask): Promise<{ trace: AgentToolTrace; output: string; candidates: EvidenceItem[] }> {

@@ -58,4 +58,19 @@ describe("MCP candidate evidence extraction", () => {
 
     expect(evidence[0]).toMatchObject({ sourceTier: "媒体报道", sourceUrl: "", sourceLabel: "待补原文链接" });
   });
+
+  it("keeps dated raw MCP text as an explicitly unverified candidate when JSON parsing is unavailable", () => {
+    const output = "2025年6月10日 海光信息披露拟换股吸收合并中科曙光的交易预案。后续尚需履行相关程序。";
+    const evidence = extractMcpEvidence(output, "search_event_notices", {
+      companyQuery: "海光信息",
+      eventQuery: "中科曙光",
+      cutoffDate: "2026-10-06",
+    }, "2026-10-06T00:00:00.000Z");
+
+    expect(evidence[0]).toMatchObject({
+      disclosedAt: "2025-06-10",
+      title: "公告检索候选材料（待核验）",
+      sourceLabel: "iFinD 原始检索片段 · 待补原文链接",
+    });
+  });
 });
