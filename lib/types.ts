@@ -74,6 +74,7 @@ export type AgentRun = {
   stopReason: string;
   toolCalls: AgentToolTrace[];
   proposal: AgentProposal | null;
+  evidence?: EvidenceItem[];
 };
 
 export type ResearchTask = {

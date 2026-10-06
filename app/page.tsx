@@ -180,7 +180,7 @@ export default function Home() {
           </div>
           <button className="case-link" onClick={() => setMode("demo")}>查看「海光信息 × 中科曙光」完整案例演示 →</button>
         </section>
-        {taskRun && <section className="execution-section"><div className="section-title"><p className="eyebrow">AGENT EXECUTION TRACE</p><h2>从任务到证据，而不是从回答到结论</h2></div><AgentRunPanel run={taskRun} task={task} /><div className="next-step"><b>下一步</b><span>若结果进入“待人工核验”，请打开权威公告原文并将 URL/正文导入；系统不会用新闻片段直接创建正式结论。</span></div><button className="return-button" onClick={() => setTaskRun(null)}>← 返回研究表单，修改任务后重新运行</button></section>}
+        {taskRun && <section className="execution-section"><div className="section-title"><p className="eyebrow">AGENT EXECUTION TRACE</p><h2>从任务到证据，而不是从回答到结论</h2></div><AgentRunPanel run={taskRun} task={task} /><ResearchTimeline task={task} evidence={taskRun.evidence ?? []} /><div className="next-step"><b>下一步</b><span>候选证据中没有直达原文的材料只能停留在待核验层；补齐权威 URL/正文后才能建立正式结论。</span></div><button className="return-button" onClick={() => setTaskRun(null)}>← 返回研究表单，修改任务后重新运行</button></section>}
       </main>
     );
   }
@@ -284,4 +284,15 @@ function AgentRunPanel({ run, task, compact = false }: { run: AgentRun; task: Re
     {run.toolCalls.map((trace, index) => <div className="run-trace" key={`${run.id}-${trace.tool}`}><b>{index + 1}. {trace.status === "完成" ? "✓" : "!"} {trace.tool}</b><span>{trace.source} · {trace.summary}</span></div>)}
     {run.proposal && <div className="run-proposal"><b>Agent 草案</b><span>{run.proposal.suggestedConclusion}</span>{run.proposal.conflict && <small>冲突：{run.proposal.conflict}</small>}</div>}
   </div>;
+}
+
+function ResearchTimeline({ task, evidence }: { task: ResearchTask; evidence: EvidenceItem[] }) {
+  const ordered = [...evidence].sort((left, right) => (left.disclosedAt || "9999-12-31").localeCompare(right.disclosedAt || "9999-12-31"));
+  return <section className="research-timeline panel">
+    <div className="timeline-header"><div><div className="panel-label">候选证据时间线</div><h2>{task.companyQuery} · {task.eventQuery}</h2></div><span>{ordered.length} 条从 MCP 提取的候选证据</span></div>
+    {ordered.length === 0 ? <div className="timeline-empty">本次 MCP 返回没有可安全结构化的证据节点。运行记录已保留；请调整关键词或历史截点后重试。</div> : <div className="research-timeline-list">{ordered.map((item) => <article className="research-timeline-item" key={item.id}>
+      <div className="research-date"><b>{item.disclosedAt || "日期待核验"}</b><span>{item.sourceTier}</span></div>
+      <div className="research-timeline-copy"><div><span className="kind-tag">{item.contentKind}</span>{item.statusEffect && <span className={`status-mini ${stateTone[item.statusEffect]}`}>{item.statusEffect}</span>}</div><h3>{item.title}</h3><p>{item.summary || "该条材料仅保留了标题与原文片段。"}</p>{item.quote && <blockquote>“{item.quote}”</blockquote>}<small>{item.publisher} · {item.sourceLabel || "待补原文链接"}</small>{item.sourceUrl ? <a href={item.sourceUrl} target="_blank" rel="noreferrer">打开原始来源 ↗</a> : <em>未提供可直达原文，不能写入正式结论</em>}</div>
+    </article>)}</div>}
+  </section>;
 }
