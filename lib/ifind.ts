@@ -130,14 +130,17 @@ function collectRecords(value: unknown, records: UnknownRecord[] = []): UnknownR
 }
 
 function relevanceTerms(task: ResearchTask) {
-  const terms = task.eventQuery.split(/[\s、，,；;·×xX]+/).filter((term) => term.length >= 2);
-  if (/并购|收购|合并|重组|换股/.test(task.eventQuery)) terms.push("并购", "收购", "合并", "重组", "换股");
-  return [...new Set(terms)];
+  const specificTerms = task.eventQuery
+    .replace(/并购|收购|吸收合并|合并|重组|换股|交易|事项|进展/g, " ")
+    .split(/[\s、，,；;·×xX]+/)
+    .filter((term) => term.length >= 2);
+  if (specificTerms.length > 0) return [...new Set(specificTerms)];
+  return task.eventQuery.split(/[\s、，,；;·×xX]+/).filter((term) => term.length >= 2);
 }
 
 function isRelevant(task: ResearchTask, text: string) {
   const terms = relevanceTerms(task);
-  return text.includes(task.companyQuery) && terms.some((term) => text.includes(term));
+  return text.includes(task.companyQuery) && terms.length > 0 && terms.every((term) => text.includes(term));
 }
 
 function toolLabel(tool: AgentToolName) {

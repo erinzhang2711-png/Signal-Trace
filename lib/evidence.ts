@@ -53,5 +53,6 @@ export function evidenceFromImport(material: ImportedMaterial, proposal: AgentPr
     summary: proposal.claim,
     impact: proposal.rationale,
     statusEffect: state,
+    reviewOutcome: state === "待人工核验" ? "待人工核验" : "支持当前结论",
   };
 }

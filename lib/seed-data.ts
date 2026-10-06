@@ -1,4 +1,13 @@
-import type { EvidenceItem, EventVersion } from "@/lib/types";
+import type { EvidenceItem, EventState, EventVersion } from "@/lib/types";
+
+export type DemoLifecycleScenario = {
+  id: "official-update" | "rumor" | "correction-expiry";
+  label: string;
+  description: string;
+  expectedOutcome: string;
+  evidence: EvidenceItem;
+  version?: Omit<EventVersion, "id" | "createdAt" | "evidenceIds">;
+};
 
 export const EVENT_META = {
   id: "hygon-sugon-merger-2025",
@@ -26,6 +35,7 @@ export const SEED_EVIDENCE: EvidenceItem[] = [
     summary: "公司披露正在筹划重大资产重组并启动停牌。",
     impact: "事件进入筹划识别阶段；尚不存在已获批或已完成的结论。",
     statusEffect: "筹划中",
+    reviewOutcome: "支持当前结论",
   },
   {
     id: "plan",
@@ -43,6 +53,7 @@ export const SEED_EVIDENCE: EvidenceItem[] = [
     summary: "双方披露换股吸收合并预案，交易构成重大资产重组及关联交易。",
     impact: "从“筹划中”更新为“预案披露”；不能推断为交易已获监管批准。",
     statusEffect: "预案披露",
+    reviewOutcome: "支持当前结论",
   },
   {
     id: "ir",
@@ -59,6 +70,7 @@ export const SEED_EVIDENCE: EvidenceItem[] = [
     quote: "公司就本次重大资产重组的背景、程序及投资者关注事项进行说明。",
     summary: "公司对预案相关事项进行投资者沟通。",
     impact: "补充背景说明，不改变交易仍需履行程序的事实状态。",
+    reviewOutcome: "支持当前结论",
   },
   {
     id: "july-progress",
@@ -76,6 +88,7 @@ export const SEED_EVIDENCE: EvidenceItem[] = [
     summary: "公司披露重组进展，未披露交易完成。",
     impact: "维持“持续推进”；旧结论不会因媒体二次报道自动升级为“已完成”。",
     statusEffect: "持续推进",
+    reviewOutcome: "支持当前结论",
   },
   {
     id: "sept-progress",
@@ -93,6 +106,7 @@ export const SEED_EVIDENCE: EvidenceItem[] = [
     summary: "截至历史快照日，交易尚未完成，仍存在程序与时间不确定性。",
     impact: "更新当前状态说明，并对任何“已完成”传闻形成反证。",
     statusEffect: "持续推进",
+    reviewOutcome: "支持当前结论",
   },
 ];
 
@@ -104,6 +118,7 @@ export const SEED_VERSIONS: EventVersion[] = [
     conclusion: "公司正在筹划重大资产重组，具体方案尚未披露。",
     changeReason: "首次停牌公告披露。",
     evidenceIds: ["suspension"],
+    kind: "首次披露",
   },
   {
     id: "v2",
@@ -112,6 +127,7 @@ export const SEED_VERSIONS: EventVersion[] = [
     conclusion: "换股吸收合并预案已披露，但交易仍需履行后续程序。",
     changeReason: "交易预案披露，明确交易方式与待履行程序。",
     evidenceIds: ["plan"],
+    kind: "更新",
   },
   {
     id: "v3",
@@ -120,5 +136,97 @@ export const SEED_VERSIONS: EventVersion[] = [
     conclusion: EVENT_META.conclusion,
     changeReason: "最新进展公告重申交易仍需履行程序，未构成完成确认。",
     evidenceIds: ["sept-progress"],
+    kind: "更新",
+  },
+];
+
+const scenarioState: EventState = "持续推进";
+
+// These are intentionally labelled product-test fixtures. They exercise governance
+// behaviour without presenting synthetic text as a real market disclosure.
+export const DEMO_LIFECYCLE_SCENARIOS: DemoLifecycleScenario[] = [
+  {
+    id: "official-update",
+    label: "权威更新",
+    description: "模拟一份带直达原文、日期和可引用摘录的权威进展材料。",
+    expectedOutcome: "创建“更新”版本；当前状态保持“持续推进”。",
+    evidence: {
+      id: "scenario-official-update",
+      title: "演示材料：权威进展复核",
+      publisher: "产品测试材料 · 参照上交所进展公告",
+      sourceUrl: "https://static.sse.com.cn/disclosure/listedinfo/announcement/c/new/2025-09-06/603019_20250906_UNNY.pdf",
+      sourceLabel: "演示预置材料 · 关联原始公告：2025-059",
+      sourceTier: "交易所/公司公告",
+      contentKind: "事实",
+      occurredAt: "2025-09-06",
+      disclosedAt: "2025-09-06",
+      capturedAt: "2025-09-06T19:00:00+08:00",
+      updatedAt: "2025-09-06T19:05:00+08:00",
+      quote: "本次交易尚需履行相应审议、审核及注册等程序后方可实施。",
+      summary: "复核最新权威公告后，未发现“交易已完成”的可证实依据。",
+      impact: "新增一条可追溯的复核记录；正式结论维持“持续推进”。",
+      statusEffect: scenarioState,
+      reviewOutcome: "支持当前结论",
+    },
+    version: {
+      state: scenarioState,
+      conclusion: EVENT_META.conclusion,
+      changeReason: "权威材料复核完成，当前结论仍由待履行程序的公告事实支撑。",
+      kind: "更新",
+    },
+  },
+  {
+    id: "rumor",
+    label: "无来源传闻",
+    description: "模拟“交易已完成”但没有原文链接、发布主体或可核验摘录的市场消息。",
+    expectedOutcome: "只进入待人工核验队列，不创建正式版本，不改变当前结论。",
+    evidence: {
+      id: "scenario-rumor",
+      title: "演示材料：市场传闻称交易已完成",
+      publisher: "未具名传播源",
+      sourceUrl: "",
+      sourceLabel: "演示预置材料 · 无可直达原文",
+      sourceTier: "用户导入",
+      contentKind: "传闻",
+      occurredAt: "2025-09-07",
+      disclosedAt: "2025-09-07",
+      capturedAt: "2025-09-07T09:20:00+08:00",
+      updatedAt: "2025-09-07T09:20:00+08:00",
+      quote: "相关交易已经完成。",
+      summary: "缺少发布主体、原文地址与权威披露，不能被用于更新正式结论。",
+      impact: "与最新进展公告的“尚需履行程序”存在冲突，隔离至人工核验。",
+      statusEffect: "待人工核验",
+      reviewOutcome: "待人工核验",
+    },
+  },
+  {
+    id: "correction-expiry",
+    label: "更正 / 过期",
+    description: "模拟一条曾被候选池引用、后被证实为过期版本的材料。",
+    expectedOutcome: "将旧线索标记为过期；当前正式结论仅依赖仍有效的权威公告。",
+    evidence: {
+      id: "scenario-correction-expiry",
+      title: "演示材料：候选线索已被更正并过期",
+      publisher: "产品测试材料 · 生命周期规则验证",
+      sourceUrl: "",
+      sourceLabel: "演示预置材料 · 不作为市场事实",
+      sourceTier: "用户导入",
+      contentKind: "观点",
+      occurredAt: "2025-09-05",
+      disclosedAt: "2025-09-05",
+      capturedAt: "2025-09-06T08:30:00+08:00",
+      updatedAt: "2025-09-07T10:00:00+08:00",
+      quote: "该候选线索已被后续权威材料覆盖。",
+      summary: "原候选线索因版本较旧且与后续公告不一致，停止作为当前结论依据。",
+      impact: "更正候选池引用关系；不追溯改写历史，只在新版本中声明旧线索已过期。",
+      statusEffect: scenarioState,
+      reviewOutcome: "已过期",
+    },
+    version: {
+      state: scenarioState,
+      conclusion: EVENT_META.conclusion,
+      changeReason: "更正：一条低等级候选线索已过期；当前结论继续以 2025-09-06 权威公告为准。",
+      kind: "更正",
+    },
   },
 ];

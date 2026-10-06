@@ -226,10 +226,31 @@ export async function POST(request: Request) {
     const status: AgentRun["status"] = modelEvidence.length === 0 || decision === "待人工核验" || proposal.requiresReview ? "待人工核验" : decision === "无状态变化" ? "无状态变化" : "待用户确认";
     const run: AgentRun = { id: `run-${Date.now()}`, status, startedAt, endedAt: new Date().toISOString(), stopReason: extractedEvidence.length === 0 ? "未提取到可构建同一事件时间线的证据节点。" : modelEvidence.length === 0 ? "已展示代码提取的候选时间线；等待 Agent 归并与人工核验。" : (result.stopReason as string) || "已完成有限工具调用。", toolCalls: traces, proposal, evidence: extractedEvidence };
     return NextResponse.json({ run });
-  } catch {
-    const run = failedRun(startedAt, traces, "Agent 或 MCP 服务暂不可用；没有生成或写入任何正式结论。");
+  } catch (error) {
+    const run = failedRun(startedAt, traces, monitorFailureReason(runtime.api, traces.length, error));
     return NextResponse.json({ run }, { status: 502 });
   }
+}
+
+function monitorFailureReason(api: "responses" | "chat", toolCallCount: number, error: unknown) {
+  const errorText = error instanceof Error ? error.message.toLowerCase() : "";
+
+  if (toolCallCount === 0) {
+    if (api === "responses") {
+      return "模型服务未完成工具规划，因此尚未调用 iFinD。请检查 Vercel Production 的 OPENAI_API_KEY 和 OPENAI_MODEL；如使用学校网关，请移除 OPENAI_API_KEY，改配 HKUST_GENAI_API_KEY、AZURE_ENDPOINT、AZURE_CHAT_DEPLOYMENT。";
+    }
+    return "学校模型网关未完成工具规划，因此尚未调用 iFinD。请检查 Vercel Production 的 HKUST_GENAI_API_KEY、AZURE_ENDPOINT、AZURE_CHAT_DEPLOYMENT 是否齐全且有效。";
+  }
+
+  if (tracesHaveFailures(toolCallCount, errorText)) {
+    return "模型已开始规划，但 iFinD MCP 工具调用未能完成。请检查 Vercel Production 的 IFIND_MCP_TOKEN、IFIND_NEWS_MCP_URL、IFIND_STOCK_MCP_URL，以及 iFinD 授权是否仍有效。";
+  }
+
+  return "模型已完成工具调用，但未能生成可解析的结构化草案；没有生成或写入任何正式结论。请稍后重试。";
+}
+
+function tracesHaveFailures(toolCallCount: number, errorText: string) {
+  return toolCallCount > 0 && /fetch|network|timeout|mcp|unauthori[sz]ed|forbidden/.test(errorText);
 }
 
 function mergeEvidence(modelEvidence: EvidenceItem[], mcpEvidence: EvidenceItem[]) {
