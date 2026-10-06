@@ -1,19 +1,5 @@
 # SignalTrace「证见」
 
-一个面向个人投研者的投资事件证据 Agent MVP。它不预测涨跌、不提供买卖建议；它的作用是把事件结论、版本变化和原始证据放在同一个可追溯工作台中。
-
-## 交付物
-
-| 题目要求 | 交付位置 | 状态 |
-| --- | --- | --- |
-| 可访问 Web 产品 | [SignalTrace 生产站点](https://signal-trace-eight.vercel.app) | 已部署 |
-| 源码仓库与 README | [GitHub 仓库](https://github.com/erinzhang2711-png/Signal-Trace) | 已提交 |
-| AI 使用与验证记录 | [docs/AI_USAGE_AND_VALIDATION.md](docs/AI_USAGE_AND_VALIDATION.md) | 已提交 |
-| 主链路、异常与合规测试说明 | [docs/TESTING.md](docs/TESTING.md) | 已提交 |
-| 60–180 秒演示视频 | [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | 按脚本录制后上传 |
-
-录制和最终提交前，请按 [提交清单](docs/SUBMISSION_CHECKLIST.md) 逐项核对。
-
 ## 演示场景
 
 默认首页从一条研究任务开始：输入公司/标的、事件关键词与历史截点，Agent 再调用 iFinD MCP 进行有限检索。**海光信息拟换股吸收合并中科曙光** 被保留为可复现的完整案例演示，数据快照截点为 **2025-09-06**。
@@ -95,7 +81,3 @@ npm run build
 - 仅覆盖一个固定历史事件的完整版本演化；全市场自动事件聚类、后台调度，以及“更正/过期”材料的端到端交互仍是后续能力。
 - 首版以固定历史案例呈现正式版本演化；传闻、观点与缺失原文的材料只会停留在候选核验队列，不会被伪造成正式版本。
 - 该产品仅做信息证据治理，不构成证券投资咨询或交易建议。
-
-## AI 使用与验证记录
-
-见 [AI 使用与验证记录](docs/AI_USAGE_AND_VALIDATION.md)、[测试说明](docs/TESTING.md) 和 [90–120 秒录屏脚本](docs/DEMO_SCRIPT.md)。
