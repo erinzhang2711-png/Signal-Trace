@@ -3,9 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { evidenceFromImport, nextState } from "@/lib/evidence";
 import { EVENT_META, SEED_EVIDENCE, SEED_VERSIONS } from "@/lib/seed-data";
-import type { AgentProposal, AgentRun, EvidenceItem, EventState, EventVersion, ImportedMaterial } from "@/lib/types";
+import type { AgentProposal, AgentRun, EvidenceItem, EventState, EventVersion, ImportedMaterial, ResearchTask } from "@/lib/types";
 
 const STORAGE_KEY = "signaltrace-hygon-sugon-v1";
+const DEMO_TASK: ResearchTask = { companyQuery: "海光信息 688041、中科曙光 603019", eventQuery: "换股吸收合并 重大资产重组", cutoffDate: "2025-09-06" };
+const EMPTY_TASK: ResearchTask = { companyQuery: "", eventQuery: "", cutoffDate: new Date().toISOString().slice(0, 10) };
 
 const stateTone: Record<EventState, string> = {
   "筹划中": "tone-amber",
@@ -35,6 +37,9 @@ export default function Home() {
   const [notice, setNotice] = useState<string | null>(null);
   const [agentRuns, setAgentRuns] = useState<AgentRun[]>([]);
   const [monitoring, setMonitoring] = useState(false);
+  const [mode, setMode] = useState<"start" | "demo">("start");
+  const [task, setTask] = useState<ResearchTask>(EMPTY_TASK);
+  const [taskRun, setTaskRun] = useState<AgentRun | null>(null);
 
   useEffect(() => {
     const saved = window.localStorage.getItem(STORAGE_KEY);
@@ -80,24 +85,37 @@ export default function Home() {
     }
   }
 
-  async function monitor() {
+  async function monitor(researchTask: ResearchTask, isDemo = false) {
     setError(null);
     setMonitoring(true);
     try {
       const response = await fetch("/api/monitor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ currentState: current.state, currentConclusion: current.conclusion }),
+        body: JSON.stringify({
+          currentState: isDemo ? current.state : "待人工核验",
+          currentConclusion: isDemo ? current.conclusion : "尚未建立正式事件结论，需基于可追溯证据创建草案。",
+          task: researchTask,
+        }),
       });
       const data = (await response.json()) as { run?: AgentRun; error?: string };
       if (!data.run) throw new Error(data.error || "监测没有返回运行记录");
-      setAgentRuns((runs) => [data.run!, ...runs].slice(0, 5));
+      if (isDemo) setAgentRuns((runs) => [data.run!, ...runs].slice(0, 5));
+      else setTaskRun(data.run);
       setNotice(data.run.status === "待用户确认" ? "Agent 已完成 iFinD 数据核查并生成草案；仍需补齐可直达原文后才能写入正式时间线。" : `本次监测已停止：${data.run.stopReason}`);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Agent 监测失败");
     } finally {
       setMonitoring(false);
     }
+  }
+
+  function startResearch() {
+    if (!task.companyQuery.trim() || !task.eventQuery.trim()) {
+      setError("请填写公司/标的与事件关键词，再启动 Agent。");
+      return;
+    }
+    void monitor(task);
   }
 
   function acceptProposal() {
@@ -131,11 +149,37 @@ export default function Home() {
     setNotice("已填入无来源传闻示例：用于演示 Agent 不会把未经证实的信息写入正式结论。");
   }
 
+  if (mode === "start") {
+    return (
+      <main>
+        <header className="topbar">
+          <div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div>
+          <div className="topbar-meta">金融事件证据 Agent <span className="divider" /> 不构成投资建议</div>
+        </header>
+        <section className="research-hero">
+          <p className="eyebrow">START WITH A RESEARCH QUESTION</p>
+          <h1>开始研究一个投资事件</h1>
+          <p>输入标的与事件线索。Agent 将规划 iFinD MCP 检索、比较证据，并把不确定结论留给你确认。</p>
+          <div className="research-card panel">
+            <div className="research-step"><span>01</span><div><b>定义研究任务</b><small>不需要先知道公告编号；自然语言描述即可。</small></div></div>
+            <label>公司 / 标的<input value={task.companyQuery} onChange={(event) => setTask({ ...task, companyQuery: event.target.value })} placeholder="例如：宁德时代 300750、特斯拉" /></label>
+            <label>事件关键词<input value={task.eventQuery} onChange={(event) => setTask({ ...task, eventQuery: event.target.value })} placeholder="例如：定增、并购重组、业绩预告、供应链中断" /></label>
+            <label>历史截点<input type="date" value={task.cutoffDate} onChange={(event) => setTask({ ...task, cutoffDate: event.target.value })} /></label>
+            {error && <div className="error-box">{error}</div>}
+            <button className="primary-button research-button" onClick={startResearch} disabled={monitoring}>{monitoring ? "Agent 正在检索证据…" : "让 Agent 开始研究 →"}</button>
+          </div>
+          <button className="case-link" onClick={() => setMode("demo")}>查看「海光信息 × 中科曙光」完整案例演示 →</button>
+        </section>
+        {taskRun && <section className="execution-section"><div className="section-title"><p className="eyebrow">AGENT EXECUTION TRACE</p><h2>从任务到证据，而不是从回答到结论</h2></div><AgentRunPanel run={taskRun} task={task} /><div className="next-step"><b>下一步</b><span>若结果进入“待人工核验”，请打开权威公告原文并将 URL/正文导入；系统不会用新闻片段直接创建正式结论。</span></div></section>}
+      </main>
+    );
+  }
+
   return (
     <main>
       <header className="topbar">
         <div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div>
-        <div className="topbar-meta"><span className="live-dot" /> 历史快照 · 2025.09.06 <span className="divider" /> 不构成投资建议</div>
+        <div className="topbar-meta"><button className="topbar-link" onClick={() => setMode("start")}>开始新研究</button><span className="divider" /> 历史快照 · 2025.09.06 <span className="divider" /> 不构成投资建议</div>
       </header>
 
       <section className="hero">
@@ -194,8 +238,8 @@ export default function Home() {
           <article className="panel monitor-card">
             <div className="panel-heading"><span>Agent 监测运行</span><small>最多 4 次工具调用</small></div>
             <p className="form-note">固定查询 2025.05.01—09.06：公告、新闻、披露事件和历史行情。模型只决定查什么；MCP 返回与状态变更都受规则和人工确认约束。</p>
-            <button className="primary-button" onClick={monitor} disabled={monitoring}>{monitoring ? "正在调用 iFinD 工具…" : "立即监测历史快照"}</button>
-            {agentRuns[0] && <div className="run-card"><div><span className={`status-mini ${agentRuns[0].status === "失败" ? "tone-red" : agentRuns[0].status === "待用户确认" ? "tone-violet" : "tone-amber"}`}>{agentRuns[0].status}</span><small>{agentRuns[0].toolCalls.length} 次工具调用</small></div><p>{agentRuns[0].stopReason}</p>{agentRuns[0].toolCalls.map((trace) => <div className="run-trace" key={`${agentRuns[0].id}-${trace.tool}`}><b>{trace.status === "完成" ? "✓" : "!"} {trace.tool}</b><span>{trace.source}</span></div>)}{agentRuns[0].proposal && <p className="run-proposal"><b>草案：</b>{agentRuns[0].proposal.suggestedConclusion}</p>}</div>}
+            <button className="primary-button" onClick={() => void monitor(DEMO_TASK, true)} disabled={monitoring}>{monitoring ? "正在调用 iFinD 工具…" : "立即监测历史快照"}</button>
+            {agentRuns[0] && <AgentRunPanel run={agentRuns[0]} task={DEMO_TASK} compact />}
           </article>
 
           <article className="panel import-card">
@@ -220,4 +264,14 @@ export default function Home() {
       </section>
     </main>
   );
+}
+
+function AgentRunPanel({ run, task, compact = false }: { run: AgentRun; task: ResearchTask; compact?: boolean }) {
+  return <div className={`run-card ${compact ? "" : "execution-card"}`}>
+    {!compact && <div className="execution-flow"><span>任务</span><i>→</i><span>检索计划</span><i>→</i><span>MCP 工具</span><i>→</i><span>证据草案</span><i>→</i><span>人工确认</span></div>}
+    <div><span className={`status-mini ${run.status === "失败" ? "tone-red" : run.status === "待用户确认" ? "tone-violet" : "tone-amber"}`}>{run.status}</span><small>{run.toolCalls.length} 次工具调用 · 截点 {task.cutoffDate}</small></div>
+    <p>{run.stopReason}</p>
+    {run.toolCalls.map((trace, index) => <div className="run-trace" key={`${run.id}-${trace.tool}`}><b>{index + 1}. {trace.status === "完成" ? "✓" : "!"} {trace.tool}</b><span>{trace.source} · {trace.summary}</span></div>)}
+    {run.proposal && <div className="run-proposal"><b>Agent 草案</b><span>{run.proposal.suggestedConclusion}</span>{run.proposal.conflict && <small>冲突：{run.proposal.conflict}</small>}</div>}
+  </div>;
 }

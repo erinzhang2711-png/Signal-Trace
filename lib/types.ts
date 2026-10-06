@@ -74,3 +74,9 @@ export type AgentRun = {
   toolCalls: AgentToolTrace[];
   proposal: AgentProposal | null;
 };
+
+export type ResearchTask = {
+  companyQuery: string;
+  eventQuery: string;
+  cutoffDate: string;
+};

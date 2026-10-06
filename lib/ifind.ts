@@ -1,21 +1,27 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 
-import type { AgentToolName, AgentToolTrace } from "@/lib/types";
-
-const HISTORY_START = "2025-05-01";
-const HISTORY_END = "2025-09-06";
+import type { AgentToolName, AgentToolTrace, ResearchTask } from "@/lib/types";
 
 type McpTarget = "stock" | "news";
 type McpCall = { target: McpTarget; tool: string; arguments: Record<string, string | number> };
 
-const TOOL_CALLS: Record<AgentToolName, McpCall> = {
+function historyStart(cutoffDate: string) {
+  const cutoff = new Date(`${cutoffDate}T00:00:00Z`);
+  cutoff.setUTCMonth(cutoff.getUTCMonth() - 6);
+  return cutoff.toISOString().slice(0, 10);
+}
+
+function toolCallsFor(task: ResearchTask): Record<AgentToolName, McpCall> {
+  const start = historyStart(task.cutoffDate);
+  const query = `${task.companyQuery} ${task.eventQuery}`.trim();
+  return {
   search_event_notices: {
     target: "news",
     tool: "search_notice",
     arguments: {
-      query: "海光信息 中科曙光 换股吸收合并 重大资产重组 进展公告",
-      time_start: HISTORY_START,
-      time_end: HISTORY_END,
+      query: `${query} 公告 进展`,
+      time_start: start,
+      time_end: task.cutoffDate,
       size: 5,
     },
   },
@@ -23,23 +29,24 @@ const TOOL_CALLS: Record<AgentToolName, McpCall> = {
     target: "news",
     tool: "search_news",
     arguments: {
-      query: "海光信息 中科曙光 换股吸收合并 重大资产重组",
-      time_start: HISTORY_START,
-      time_end: HISTORY_END,
+      query,
+      time_start: start,
+      time_end: task.cutoffDate,
       size: 5,
     },
   },
   get_disclosed_event_context: {
     target: "stock",
     tool: "get_stock_events",
-    arguments: { query: "海光信息 688041、中科曙光 603019 2025年5月1日至2025年9月6日并购重组、换股吸收合并与进展" },
+    arguments: { query: `${query} ${start}至${task.cutoffDate} 公开披露事件与进展` },
   },
   get_historical_market_context: {
     target: "stock",
     tool: "get_stock_performance",
-    arguments: { query: "海光信息 688041、中科曙光 603019 在2025-05-23至2025-06-10的收盘价、涨跌幅、成交额日频历史行情" },
+    arguments: { query: `${task.companyQuery} 在${start}至${task.cutoffDate}的收盘价、涨跌幅、成交额日频历史行情，仅作同期市场背景` },
   },
-};
+  };
+}
 
 function serverUrl(target: McpTarget) {
   return target === "news" ? process.env.IFIND_NEWS_MCP_URL : process.env.IFIND_STOCK_MCP_URL;
@@ -54,8 +61,8 @@ function textFromResult(content: unknown): string {
   return joined ? joined.slice(0, 12_000) : "MCP 未返回可展示的文本结果。";
 }
 
-export async function runIFindTool(tool: AgentToolName): Promise<{ trace: AgentToolTrace; output: string }> {
-  const call = TOOL_CALLS[tool];
+export async function runIFindTool(tool: AgentToolName, task: ResearchTask): Promise<{ trace: AgentToolTrace; output: string }> {
+  const call = toolCallsFor(task)[tool];
   const token = process.env.IFIND_MCP_TOKEN;
   const url = serverUrl(call.target);
   const capturedAt = new Date().toISOString();
@@ -83,4 +90,4 @@ export async function runIFindTool(tool: AgentToolName): Promise<{ trace: AgentT
   }
 }
 
-export const AGENT_TOOL_NAMES = Object.keys(TOOL_CALLS) as AgentToolName[];
+export const AGENT_TOOL_NAMES = ["search_event_notices", "search_related_news", "get_disclosed_event_context", "get_historical_market_context"] as AgentToolName[];
