@@ -47,7 +47,10 @@ export default function Home() {
     const frame = window.requestAnimationFrame(() => {
       try {
         const parsed = JSON.parse(saved) as { evidence: EvidenceItem[]; versions: EventVersion[]; agentRuns?: AgentRun[] };
-        setEvidence(parsed.evidence);
+        setEvidence(parsed.evidence.map((item) => {
+          const refreshedSeed = SEED_EVIDENCE.find((seed) => seed.id === item.id);
+          return refreshedSeed ? { ...item, sourceUrl: refreshedSeed.sourceUrl, sourceLabel: refreshedSeed.sourceLabel, publisher: refreshedSeed.publisher } : item;
+        }));
         setVersions(parsed.versions);
         setAgentRuns(parsed.agentRuns ?? []);
       } catch {
@@ -239,7 +242,7 @@ export default function Home() {
             <div className="panel-heading"><span>证据详情</span><span className={`source-tag ${selected.sourceTier === "交易所/公司公告" ? "official" : "user"}`}>{selected.sourceTier}</span></div>
             <h3>{selected.title}</h3><blockquote>“{selected.quote}”</blockquote><p>{selected.impact}</p>
             <dl><div><dt>发生</dt><dd>{selected.occurredAt}</dd></div><div><dt>披露</dt><dd>{selected.disclosedAt}</dd></div><div><dt>抓取</dt><dd>{formatDate(selected.capturedAt)}</dd></div></dl>
-            <a href={selected.sourceUrl} target="_blank" rel="noreferrer">打开原始来源 ↗</a>
+            <small className="source-reference">{selected.sourceLabel ?? "用户导入材料"}</small><a href={selected.sourceUrl} target="_blank" rel="noreferrer">打开公告原文 ↗</a>
           </article>
 
           <article className="panel monitor-card">

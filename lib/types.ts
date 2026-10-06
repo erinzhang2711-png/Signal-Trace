@@ -7,6 +7,7 @@ export type EvidenceItem = {
   title: string;
   publisher: string;
   sourceUrl: string;
+  sourceLabel?: string;
   sourceTier: SourceTier;
   contentKind: ContentKind;
   occurredAt: string;
