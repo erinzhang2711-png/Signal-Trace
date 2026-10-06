@@ -188,8 +188,8 @@ export default function Home() {
   return (
     <main>
       <header className="topbar">
-        <div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div>
-        <div className="topbar-meta"><button className="topbar-link" onClick={returnToResearchStart}>开始新研究</button><span className="divider" /> 历史快照 · 2025.09.06 <span className="divider" /> 不构成投资建议</div>
+        <div className="topbar-left"><div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div><button className="topbar-start" onClick={returnToResearchStart}>← 开始新研究</button></div>
+        <div className="topbar-meta">历史快照 · 2025.09.06 <span className="divider" /> 不构成投资建议</div>
       </header>
 
       <section className="hero">
@@ -198,7 +198,7 @@ export default function Home() {
           <h1>{EVENT_META.title}</h1>
           <p className="subtitle">把每一次结论变化，带回原始证据。</p>
         </div>
-        <div className="watchlist"><button className="new-research-button" onClick={returnToResearchStart}>← 开始新研究</button><span>关注标的</span>{EVENT_META.watchlist.map((item) => <b key={item}>{item}</b>)}</div>
+        <div className="watchlist"><span>关注标的</span>{EVENT_META.watchlist.map((item) => <b key={item}>{item}</b>)}</div>
       </section>
 
       {notice && <div className="notice" role="status"><span>✓</span>{notice}<button onClick={() => setNotice(null)}>关闭</button></div>}
