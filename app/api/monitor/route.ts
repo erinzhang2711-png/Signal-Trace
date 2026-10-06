@@ -136,6 +136,7 @@ export async function POST(request: Request) {
 
   const startedAt = new Date().toISOString();
   const traces: AgentRun["toolCalls"] = [];
+  const mcpEvidence: EvidenceItem[] = [];
   const executed = new Set<AgentToolName>();
 
   try {
@@ -158,6 +159,7 @@ export async function POST(request: Request) {
           executed.add(tool);
           const toolResult = await runIFindTool(tool, payload.data.task);
           traces.push(toolResult.trace);
+          mcpEvidence.push(...toolResult.candidates);
           return { type: "function_call_output" as const, call_id: call.call_id, output: JSON.stringify({ source: toolResult.trace.source, capturedAt: toolResult.trace.capturedAt, content: toolResult.output }) };
         }));
         response = await runtime.client.responses.create({ model: runtime.model, previous_response_id: response.id, input: outputs, tools, tool_choice: "auto" });
@@ -190,6 +192,7 @@ export async function POST(request: Request) {
             executed.add(tool);
             const toolResult = await runIFindTool(tool, payload.data.task);
             traces.push(toolResult.trace);
+            mcpEvidence.push(...toolResult.candidates);
             output = JSON.stringify({ source: toolResult.trace.source, capturedAt: toolResult.trace.capturedAt, content: toolResult.output });
           }
           messages.push({ role: "tool", tool_call_id: call.id, content: output });
@@ -206,26 +209,36 @@ export async function POST(request: Request) {
       result = JSON.parse(output) as Record<string, unknown>;
     }
 
-    const extractedEvidence = evidenceFrom(payload.data.task, result);
-    const proposal = extractedEvidence.length === 0 ? {
+    const modelEvidence = evidenceFrom(payload.data.task, result);
+    const extractedEvidence = mergeEvidence(modelEvidence, mcpEvidence);
+    const proposal = modelEvidence.length === 0 ? {
       ...proposalFrom(result),
       proposedState: "待人工核验" as const,
       confidence: "低" as const,
-      claim: "当前检索未提取到可用于构建同一事件时间线的候选证据。",
+      claim: extractedEvidence.length === 0 ? "当前检索未提取到可用于构建同一事件时间线的候选证据。" : "已提取候选时间线材料，等待 Agent 归并与人工核验后再建立正式结论。",
       quote: "",
-      conflict: "检索词过于宽泛，或 MCP 返回材料未包含可核验的同一事件节点。",
-      rationale: "未获得可追溯的事件证据，不建立或升级任何正式结论。",
+      conflict: extractedEvidence.length === 0 ? "检索词过于宽泛，或 MCP 返回材料未包含可核验的同一事件节点。" : "候选材料尚未被模型逐条归并为正式证据，不能据此改变事件状态。",
+      rationale: "代码提取只负责保守展示候选材料；未获得模型可追溯的归并结果前，不建立或升级任何正式结论。",
       requiresReview: true,
-      suggestedConclusion: "未识别到可建立时间线的同一事件证据；请补充交易对手、标的或事件名称后重试。",
+      suggestedConclusion: extractedEvidence.length === 0 ? "未识别到可建立时间线的同一事件证据；请补充交易对手、标的或事件名称后重试。" : "已展示候选时间线；请打开原文核验并确认是否属于同一事件。",
     } : proposalFrom(result);
     const decision = result.decision as string;
-    const status: AgentRun["status"] = extractedEvidence.length === 0 || decision === "待人工核验" || proposal.requiresReview ? "待人工核验" : decision === "无状态变化" ? "无状态变化" : "待用户确认";
-    const run: AgentRun = { id: `run-${Date.now()}`, status, startedAt, endedAt: new Date().toISOString(), stopReason: extractedEvidence.length === 0 ? "未提取到可构建同一事件时间线的证据节点。" : (result.stopReason as string) || "已完成有限工具调用。", toolCalls: traces, proposal, evidence: extractedEvidence };
+    const status: AgentRun["status"] = modelEvidence.length === 0 || decision === "待人工核验" || proposal.requiresReview ? "待人工核验" : decision === "无状态变化" ? "无状态变化" : "待用户确认";
+    const run: AgentRun = { id: `run-${Date.now()}`, status, startedAt, endedAt: new Date().toISOString(), stopReason: extractedEvidence.length === 0 ? "未提取到可构建同一事件时间线的证据节点。" : modelEvidence.length === 0 ? "已展示代码提取的候选时间线；等待 Agent 归并与人工核验。" : (result.stopReason as string) || "已完成有限工具调用。", toolCalls: traces, proposal, evidence: extractedEvidence };
     return NextResponse.json({ run });
   } catch {
     const run = failedRun(startedAt, traces, "Agent 或 MCP 服务暂不可用；没有生成或写入任何正式结论。");
     return NextResponse.json({ run }, { status: 502 });
   }
+}
+
+function mergeEvidence(modelEvidence: EvidenceItem[], mcpEvidence: EvidenceItem[]) {
+  const merged = new Map<string, EvidenceItem>();
+  for (const item of [...mcpEvidence, ...modelEvidence]) {
+    const key = `${item.title.trim()}|${item.disclosedAt}|${item.sourceUrl}`;
+    merged.set(key, item);
+  }
+  return [...merged.values()].sort((left, right) => left.disclosedAt.localeCompare(right.disclosedAt)).slice(0, 6);
 }
 
 function failedRun(startedAt: string, traces: AgentRun["toolCalls"], stopReason: string): AgentRun {
