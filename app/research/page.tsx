@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 
 import { evidenceFromImport, nextState } from "@/lib/evidence";
 import type { AgentProposal, AgentRun, EvidenceItem, EventState, ImportedMaterial, ResearchTask } from "@/lib/types";
@@ -28,7 +28,6 @@ export default function ResearchPage() {
 }
 
 function ResearchWorkspace() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const task = useMemo<ResearchTask>(() => ({
     companyQuery: searchParams.get("company")?.trim() ?? "",
@@ -73,11 +72,11 @@ function ResearchWorkspace() {
     void runResearch();
   }, [runResearch, taskKey]);
 
-  if (run) return <ResearchDashboard task={task} run={run} onBack={() => router.push("/")} onRerun={() => void runResearch()} />;
+  if (run) return <ResearchDashboard task={task} run={run} onRerun={() => void runResearch()} />;
 
   return <main>
     <header className="topbar">
-      <div className="topbar-left"><div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div><button className="topbar-start" onClick={() => router.push("/")}>← 修改研究任务</button></div>
+      <div className="topbar-left"><div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div><a className="topbar-start" href="/">← 修改研究任务</a></div>
       <div className="topbar-meta">金融事件证据 Agent <span className="divider" /> 不构成投资建议</div>
     </header>
     <section className="result-hero">
@@ -87,23 +86,23 @@ function ResearchWorkspace() {
     </section>
     <section className="execution-section result-content">
       {loading && <div className="research-loading panel"><span className="live-dot" />Agent 正在调用 iFinD MCP 检索公告、新闻、披露事件与历史市场背景…</div>}
-      {error && <div className="error-box">{error}</div>}
+      {error && <div className="error-box">{error} <a href="/">返回研究首页</a></div>}
     </section>
   </main>;
 }
 
-function ResearchDashboard({ task, run, onBack, onRerun }: { task: ResearchTask; run: AgentRun; onBack: () => void; onRerun: () => void }) {
+function ResearchDashboard({ task, run, onRerun }: { task: ResearchTask; run: AgentRun; onRerun: () => void }) {
   const evidence = useMemo<EvidenceItem[]>(() => run.evidence?.length ? [...run.evidence].sort((left, right) => left.disclosedAt.localeCompare(right.disclosedAt)) : [], [run]);
   const canBuildTimeline = run.status === "待用户确认" && evidence.some((item) => item.sourceUrl && item.quote);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  if (!canBuildTimeline) return <CandidateResearchInbox task={task} run={run} onBack={onBack} onRerun={onRerun} />;
+  if (!canBuildTimeline) return <CandidateResearchInbox task={task} run={run} onRerun={onRerun} />;
 
   const selected = evidence.find((item) => item.id === selectedId) ?? evidence[0];
   const state = run.proposal?.proposedState ?? "待人工核验";
   const conclusion = run.proposal?.suggestedConclusion || (evidence.length ? "已检索到候选材料，正在等待 Agent 归并与原文核验；当前不建立正式事件结论。" : "本次未检索到可展示材料，正式事件状态保持待人工核验。");
 
   return <main>
-    <header className="topbar"><div className="topbar-left"><div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div><button className="topbar-start" onClick={onBack}>← 开始新研究</button></div><div className="topbar-meta">金融事件证据 Agent <span className="divider" /> 不构成投资建议</div></header>
+    <header className="topbar"><div className="topbar-left"><div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div><a className="topbar-start" href="/">← 开始新研究</a></div><div className="topbar-meta">金融事件证据 Agent <span className="divider" /> 不构成投资建议</div></header>
     <section className="hero"><div><p className="eyebrow">EVIDENCE-FIRST EVENT INTELLIGENCE</p><h1>{task.companyQuery}</h1><p className="subtitle">{task.eventQuery} · 截至 {task.cutoffDate} 的可追溯研究快照</p></div><div className="watchlist"><span>研究标的</span><b>{task.companyQuery}</b></div></section>
     <section className="dashboard">
       <aside className="left-column">
@@ -120,7 +119,7 @@ function ResearchDashboard({ task, run, onBack, onRerun }: { task: ResearchTask;
   </main>;
 }
 
-function CandidateResearchInbox({ task, run, onBack, onRerun }: { task: ResearchTask; run: AgentRun; onBack: () => void; onRerun: () => void }) {
+function CandidateResearchInbox({ task, run, onRerun }: { task: ResearchTask; run: AgentRun; onRerun: () => void }) {
   const [material, setMaterial] = useState<ImportedMaterial>(blankMaterial);
   const [proposal, setProposal] = useState<AgentProposal | null>(null);
   const [loading, setLoading] = useState(false);
@@ -167,10 +166,10 @@ function CandidateResearchInbox({ task, run, onBack, onRerun }: { task: Research
     setFormalRun({ ...run, id: `${run.id}-confirmed`, status: "待用户确认", stopReason: "人工已核验并确认首条权威证据，已建立正式事件工作台。", proposal, evidence: [item] });
   }
 
-  if (formalRun) return <ResearchDashboard task={task} run={formalRun} onBack={onBack} onRerun={onRerun} />;
+  if (formalRun) return <ResearchDashboard task={task} run={formalRun} onRerun={onRerun} />;
 
   return <main>
-    <header className="topbar"><div className="topbar-left"><div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div><button className="topbar-start" onClick={onBack}>← 修改研究任务</button></div><div className="topbar-meta">金融事件证据 Agent <span className="divider" /> 不构成投资建议</div></header>
+    <header className="topbar"><div className="topbar-left"><div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div><a className="topbar-start" href="/">← 修改研究任务</a></div><div className="topbar-meta">金融事件证据 Agent <span className="divider" /> 不构成投资建议</div></header>
     <section className="hero"><div><p className="eyebrow">RESEARCH INBOX · NOT A FORMAL EVENT</p><h1>{task.companyQuery}</h1><p className="subtitle">{task.eventQuery} · 截至 {task.cutoffDate} 的候选材料收件箱</p></div><div className="watchlist"><span>研究标的</span><b>{task.companyQuery}</b></div></section>
     <section className="inbox-layout">
       <aside className="left-column"><article className="panel conclusion-card"><div className="panel-label">尚未建立正式事件</div><div className="state-row"><span className="status-pill tone-amber">待人工核验</span><span className="version">候选池</span></div><p>Agent 找到的是可能相关的材料，不等于已识别出“同一投资事件”。在交易对手、原文链接或时间字段不完整时，系统不会伪造一条时间线。</p><div className="risk-callout"><strong>为什么没有时间线？</strong><span>当前材料不足以安全归并，也不能判断其是事实、观点、推测或传闻。</span></div></article><article className="panel market-card"><div className="panel-heading"><span>检索覆盖</span><small>非因果验证</small></div><div className="market-grid"><div><span>工具调用</span><b>{run.toolCalls.length} 次</b></div><div><span>候选片段</span><b>{candidates.length} 条</b></div><div><span>历史截点</span><b>{task.cutoffDate}</b></div></div><p className="fine-print">MCP 的返回先进入候选池；只有来源和事件归并通过后，才会成为可追溯证据。</p></article></aside>
