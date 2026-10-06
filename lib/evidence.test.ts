@@ -35,6 +35,10 @@ describe("evidence governance", () => {
     expect(nextState("持续推进", rumor, unsourced)).toBe("待人工核验");
   });
 
+  it("allows a sourced official update to establish a formal event state", () => {
+    expect(nextState("待人工核验", proposal, material)).toBe("持续推进");
+  });
+
   it("records a quarantined outcome for evidence that cannot change the event", () => {
     const rumor = { ...proposal, contentKind: "传闻" as const, proposedState: "已完成" as const };
     const unsourced = { ...material, publisher: "", sourceUrl: "" };
