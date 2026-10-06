@@ -234,8 +234,14 @@ export async function POST(request: Request) {
 
 function monitorFailureReason(api: "responses" | "chat", toolCallCount: number, error: unknown) {
   const errorText = error instanceof Error ? error.message.toLowerCase() : "";
+  const status = errorStatus(error);
 
   if (toolCallCount === 0) {
+    if (status === 429) return "学校模型网关返回 HTTP 429（额度耗尽或请求限流），因此尚未调用 iFinD。请稍后重试，或向学校网关确认额度与速率限制。";
+    if (status === 401 || status === 403) return "学校模型网关返回 HTTP " + status + "（认证或权限失败），因此尚未调用 iFinD。请更新 Vercel Production 的 HKUST_GENAI_API_KEY，或确认该 Key 有权使用目标部署。";
+    if (status === 404) return "学校模型网关返回 HTTP 404（endpoint 或模型部署未找到），因此尚未调用 iFinD。请核对 Vercel Production 的 AZURE_ENDPOINT 与 AZURE_CHAT_DEPLOYMENT。";
+    if (status === 400) return "学校模型网关返回 HTTP 400（请求格式或工具调用不被该部署接受），因此尚未调用 iFinD。请确认学校网关支持 Chat Completions 与 function calling。";
+    if (status && status >= 500) return "学校模型网关返回 HTTP " + status + "（服务端暂时不可用），因此尚未调用 iFinD。请稍后重试。";
     if (api === "responses") {
       return "模型服务未完成工具规划，因此尚未调用 iFinD。请检查 Vercel Production 的 OPENAI_API_KEY 和 OPENAI_MODEL；如使用学校网关，请移除 OPENAI_API_KEY，改配 HKUST_GENAI_API_KEY、AZURE_ENDPOINT、AZURE_CHAT_DEPLOYMENT。";
     }
@@ -247,6 +253,12 @@ function monitorFailureReason(api: "responses" | "chat", toolCallCount: number, 
   }
 
   return "模型已完成工具调用，但未能生成可解析的结构化草案；没有生成或写入任何正式结论。请稍后重试。";
+}
+
+function errorStatus(error: unknown) {
+  if (!error || typeof error !== "object" || !("status" in error)) return null;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : null;
 }
 
 function tracesHaveFailures(toolCallCount: number, errorText: string) {
