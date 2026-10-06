@@ -118,6 +118,13 @@ export default function Home() {
     void monitor(task);
   }
 
+  function returnToResearchStart() {
+    setMode("start");
+    setTaskRun(null);
+    setError(null);
+    setNotice(null);
+  }
+
   function acceptProposal() {
     if (!proposal) return;
     const state = nextState(current.state, proposal, material);
@@ -170,7 +177,7 @@ export default function Home() {
           </div>
           <button className="case-link" onClick={() => setMode("demo")}>查看「海光信息 × 中科曙光」完整案例演示 →</button>
         </section>
-        {taskRun && <section className="execution-section"><div className="section-title"><p className="eyebrow">AGENT EXECUTION TRACE</p><h2>从任务到证据，而不是从回答到结论</h2></div><AgentRunPanel run={taskRun} task={task} /><div className="next-step"><b>下一步</b><span>若结果进入“待人工核验”，请打开权威公告原文并将 URL/正文导入；系统不会用新闻片段直接创建正式结论。</span></div></section>}
+        {taskRun && <section className="execution-section"><div className="section-title"><p className="eyebrow">AGENT EXECUTION TRACE</p><h2>从任务到证据，而不是从回答到结论</h2></div><AgentRunPanel run={taskRun} task={task} /><div className="next-step"><b>下一步</b><span>若结果进入“待人工核验”，请打开权威公告原文并将 URL/正文导入；系统不会用新闻片段直接创建正式结论。</span></div><button className="return-button" onClick={() => setTaskRun(null)}>← 返回研究表单，修改任务后重新运行</button></section>}
       </main>
     );
   }
@@ -179,7 +186,7 @@ export default function Home() {
     <main>
       <header className="topbar">
         <div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div>
-        <div className="topbar-meta"><button className="topbar-link" onClick={() => setMode("start")}>开始新研究</button><span className="divider" /> 历史快照 · 2025.09.06 <span className="divider" /> 不构成投资建议</div>
+        <div className="topbar-meta"><button className="topbar-link" onClick={returnToResearchStart}>开始新研究</button><span className="divider" /> 历史快照 · 2025.09.06 <span className="divider" /> 不构成投资建议</div>
       </header>
 
       <section className="hero">
@@ -188,7 +195,7 @@ export default function Home() {
           <h1>{EVENT_META.title}</h1>
           <p className="subtitle">把每一次结论变化，带回原始证据。</p>
         </div>
-        <div className="watchlist"><span>关注标的</span>{EVENT_META.watchlist.map((item) => <b key={item}>{item}</b>)}</div>
+        <div className="watchlist"><button className="new-research-button" onClick={returnToResearchStart}>← 开始新研究</button><span>关注标的</span>{EVENT_META.watchlist.map((item) => <b key={item}>{item}</b>)}</div>
       </section>
 
       {notice && <div className="notice" role="status"><span>✓</span>{notice}<button onClick={() => setNotice(null)}>关闭</button></div>}
