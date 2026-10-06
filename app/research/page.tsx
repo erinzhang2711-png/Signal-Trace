@@ -15,7 +15,11 @@ const stateTone: Record<EventState, string> = {
 };
 
 export default function ResearchPage() {
-  return <Suspense fallback={<ResearchLoading />}>\n+    <ResearchWorkspace />\n+  </Suspense>;
+  return (
+    <Suspense fallback={<ResearchLoading />}>
+      <ResearchWorkspace />
+    </Suspense>
+  );
 }
 
 function ResearchWorkspace() {
