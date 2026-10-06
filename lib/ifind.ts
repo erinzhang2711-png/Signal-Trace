@@ -1,6 +1,6 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 
-import type { AgentToolName, AgentToolTrace, ResearchTask } from "@/lib/types";
+import type { AgentToolName, AgentToolTrace, EvidenceItem, ResearchTask, SourceTier } from "@/lib/types";
 
 type McpTarget = "stock" | "news";
 type McpCall = { target: McpTarget; tool: string; arguments: Record<string, string | number> };
@@ -61,7 +61,116 @@ function textFromResult(content: unknown): string {
   return joined ? joined.slice(0, 12_000) : "MCP 未返回可展示的文本结果。";
 }
 
-export async function runIFindTool(tool: AgentToolName, task: ResearchTask): Promise<{ trace: AgentToolTrace; output: string }> {
+type UnknownRecord = Record<string, unknown>;
+
+const TITLE_KEYS = ["title", "headline", "name", "notice_title", "news_title", "标题", "公告标题", "新闻标题"];
+const DATE_KEYS = ["date", "publish_date", "pub_date", "publishdate", "publishtime", "time", "日期", "发布时间", "披露日期", "公告日期"];
+const URL_KEYS = ["url", "link", "source_url", "news_url", "notice_url", "原文链接", "链接", "网址"];
+const PUBLISHER_KEYS = ["source", "publisher", "media", "author", "来源", "发布方", "媒体"];
+const BODY_KEYS = ["summary", "content", "abstract", "description", "text", "正文", "摘要", "内容", "简介"];
+
+function recordValue(record: UnknownRecord, keys: string[]) {
+  const normalized = new Map(Object.entries(record).map(([key, value]) => [key.toLowerCase(), value]));
+  for (const key of keys) {
+    const value = normalized.get(key.toLowerCase());
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number") return String(value);
+  }
+  return "";
+}
+
+function normalizeDate(value: string) {
+  const match = value.match(/(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})/);
+  if (!match) return "";
+  const normalized = `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
+  return new Date(`${normalized}T00:00:00Z`).toISOString().slice(0, 10) === normalized ? normalized : "";
+}
+
+function isHttpsUrl(value: string) {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function sourceTier(publisher: string, sourceUrl: string): SourceTier {
+  if (!sourceUrl) return "媒体报道";
+  const value = `${publisher} ${sourceUrl}`.toLowerCase();
+  if (value.includes("sse.com") || value.includes("cninfo") || value.includes("公告") || value.includes("证券交易所")) return "交易所/公司公告";
+  if (value.includes("investor") || value.includes("投资者") || value.includes("ir.")) return "公司投资者关系";
+  return "媒体报道";
+}
+
+function parsedDocuments(output: string): unknown[] {
+  const candidates = [output, ...Array.from(output.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi), (match) => match[1])];
+  return candidates.flatMap((candidate) => {
+    try {
+      return [JSON.parse(candidate) as unknown];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function collectRecords(value: unknown, records: UnknownRecord[] = []): UnknownRecord[] {
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectRecords(item, records));
+  } else if (value && typeof value === "object") {
+    const record = value as UnknownRecord;
+    if (recordValue(record, TITLE_KEYS) && recordValue(record, DATE_KEYS)) records.push(record);
+    Object.values(record).forEach((item) => collectRecords(item, records));
+  }
+  return records;
+}
+
+function relevanceTerms(task: ResearchTask) {
+  const terms = task.eventQuery.split(/[\s、，,；;·×xX]+/).filter((term) => term.length >= 2);
+  if (/并购|收购|合并|重组|换股/.test(task.eventQuery)) terms.push("并购", "收购", "合并", "重组", "换股");
+  return [...new Set(terms)];
+}
+
+function isRelevant(task: ResearchTask, text: string) {
+  const terms = relevanceTerms(task);
+  return text.includes(task.companyQuery) && terms.some((term) => text.includes(term));
+}
+
+export function extractMcpEvidence(output: string, tool: AgentToolName, task: ResearchTask, capturedAt: string): EvidenceItem[] {
+  const seen = new Set<string>();
+  return parsedDocuments(output).flatMap((document) => collectRecords(document)).flatMap((record, index) => {
+    const title = recordValue(record, TITLE_KEYS);
+    const disclosedAt = normalizeDate(recordValue(record, DATE_KEYS));
+    const body = recordValue(record, BODY_KEYS);
+    const combined = `${title}\n${body}`;
+    if (!title || !disclosedAt || disclosedAt > task.cutoffDate || !isRelevant(task, combined)) return [];
+
+    const candidateUrl = recordValue(record, URL_KEYS);
+    const sourceUrl = isHttpsUrl(candidateUrl) ? candidateUrl : "";
+    const publisher = recordValue(record, PUBLISHER_KEYS) || (tool === "search_event_notices" ? "iFinD 公告检索结果" : "iFinD 检索结果");
+    const key = `${title}|${disclosedAt}|${sourceUrl}`;
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [{
+      id: `mcp-${capturedAt}-${index}`,
+      title,
+      publisher,
+      sourceUrl,
+      sourceLabel: sourceUrl ? "打开 iFinD 返回的原始链接" : "待补原文链接",
+      sourceTier: sourceTier(publisher, sourceUrl),
+      contentKind: "事实" as const,
+      occurredAt: disclosedAt,
+      disclosedAt,
+      capturedAt,
+      updatedAt: capturedAt,
+      quote: body.slice(0, 180),
+      summary: body.slice(0, 280) || "MCP 返回的候选材料，待 Agent 归并与原文核验。",
+      impact: "候选证据，待 Agent 归并与原文核验。",
+      statusEffect: "待人工核验" as const,
+    }];
+  });
+}
+
+export async function runIFindTool(tool: AgentToolName, task: ResearchTask): Promise<{ trace: AgentToolTrace; output: string; candidates: EvidenceItem[] }> {
   const call = toolCallsFor(task)[tool];
   const token = process.env.IFIND_MCP_TOKEN;
   const url = serverUrl(call.target);
@@ -69,7 +178,7 @@ export async function runIFindTool(tool: AgentToolName, task: ResearchTask): Pro
   const source = call.target === "news" ? "iFinD 新闻公告 MCP" : "iFinD A股数据 MCP";
 
   if (!token || !url) {
-    return { trace: { tool, source, status: "失败", capturedAt, summary: "未配置 iFinD MCP 环境变量，未查询外部数据。" }, output: "工具不可用：未配置 iFinD MCP。" };
+    return { trace: { tool, source, status: "失败", capturedAt, summary: "未配置 iFinD MCP 环境变量，未查询外部数据。" }, output: "工具不可用：未配置 iFinD MCP。", candidates: [] };
   }
 
   const client = new Client({ name: "signaltrace-monitor", version: "0.1.0" });
@@ -82,9 +191,10 @@ export async function runIFindTool(tool: AgentToolName, task: ResearchTask): Pro
     await client.connect(transport, { timeout: 15_000 });
     const result = await client.callTool({ name: call.tool, arguments: call.arguments }, { timeout: 15_000 });
     const output = textFromResult(result.content);
-    return { trace: { tool, source, status: "完成", capturedAt, summary: `${call.tool} 已返回 ${output.length} 字符的可审阅结果。` }, output };
+    const candidates = extractMcpEvidence(output, tool, task, capturedAt);
+    return { trace: { tool, source, status: "完成", capturedAt, summary: `${call.tool} 已返回 ${output.length} 字符的可审阅结果；代码提取 ${candidates.length} 条候选材料。` }, output, candidates };
   } catch {
-    return { trace: { tool, source, status: "失败", capturedAt, summary: "MCP 调用失败；本次不会据此生成正式结论。" }, output: "工具调用失败，未取得数据。" };
+    return { trace: { tool, source, status: "失败", capturedAt, summary: "MCP 调用失败；本次不会据此生成正式结论。" }, output: "工具调用失败，未取得数据。", candidates: [] };
   } finally {
     await transport.close().catch(() => undefined);
   }
