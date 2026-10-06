@@ -253,6 +253,11 @@ export default function Home() {
 
       {notice && <div className="notice" role="status"><span>✓</span>{notice}<button onClick={() => setNotice(null)}>关闭</button></div>}
 
+      <section className="scenario-strip" aria-label="验证结论如何变化">
+        <div className="scenario-strip-heading"><p className="eyebrow">TRY THE GOVERNANCE LOOP</p><h2>验证结论如何变化</h2><p>这不是另一套功能，而是同一事件在新材料出现时的三种处理结果。</p></div>
+        <div className="scenario-strip-actions">{DEMO_LIFECYCLE_SCENARIOS.map((scenario, index) => <button className="scenario-action" key={scenario.id} onClick={() => applyLifecycleScenario(scenario)}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{scenario.label}</b><small>{scenario.expectedOutcome}</small></div></button>)}</div>
+      </section>
+
       <section className="dashboard">
         <aside className="left-column">
           <article className="panel conclusion-card">
@@ -313,12 +318,6 @@ export default function Home() {
             <button className="demo-link" onClick={useDemoMaterial}>填入“无来源传闻”测试样例</button>
             {error && <div className="error-box">{error}</div>}
             <button className="primary-button" onClick={analyze} disabled={loading}>{loading ? "正在生成证据提议…" : "让 Agent 分析线索"}</button>
-          </article>
-
-          <article className="panel lifecycle-card">
-            <div className="panel-heading"><span>生命周期演练</span><small>产品测试数据</small></div>
-            <p className="form-note">用于展示“更新、传闻隔离、更正/过期”如何影响证据与版本。演练材料不冒充真实市场披露。</p>
-            {DEMO_LIFECYCLE_SCENARIOS.map((scenario) => <button className="scenario-button" key={scenario.id} onClick={() => applyLifecycleScenario(scenario)}><b>{scenario.label}</b><span>{scenario.description}</span></button>)}
           </article>
 
           {proposal && <article className="panel proposal-card">
