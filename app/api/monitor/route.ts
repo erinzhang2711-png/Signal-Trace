@@ -68,7 +68,7 @@ const SYSTEM_PROMPT = `你是 SignalTrace 的单一投资事件证据 Agent。�
 
 公告和公司披露优先于新闻；新闻、观点、传闻不能把“尚需审议、审核或注册”的交易升级为“已完成”。来源不充分、工具失败、材料冲突时，decision 必须为“待人工核验”。若没有足以改变当前结论的新事实，decision 必须为“无状态变化”。quote 必须可在工具返回材料中逐字找到；没有可靠短引时使用空字符串并要求人工核验。所有结果仅为草案，必须由用户确认后才可能写入版本。
 
-你还必须在 evidence 数组中输出 0 至 6 条候选时间线证据，按披露日升序。每条证据只能来自工具返回内容：标题、发布者、日期、原文短引和摘要不得补写或猜测。工具结果中没有可直达原文 URL 时，sourceUrl 必须为空字符串，sourceLabel 写“待补原文链接”，来源等级最多为“媒体报道”；严禁编造 URL 或把搜索摘要伪装为交易所公告。若检索到了材料但无法确认日期，保留候选证据并将 disclosedAt 置为空字符串。`;
+你还必须在 evidence 数组中输出 0 至 6 条候选时间线证据，按披露日升序。每条证据必须直接提到研究公司和事件线索，或明确是该事件的后续进展；不得因为公司名称出现在财报、员工持股、通用资本运作分类页中就收录。每条证据只能来自工具返回内容：标题、发布者、日期、原文短引和摘要不得补写或猜测。工具结果中没有可直达原文 URL 时，sourceUrl 必须为空字符串，sourceLabel 写“待补原文链接”，来源等级最多为“媒体报道”；严禁编造 URL 或把搜索摘要伪装为交易所公告。不得输出历史截点之后或日期格式不完整的材料。`;
 
 function proposalFrom(result: Record<string, unknown>): AgentProposal {
   return {
@@ -85,7 +85,7 @@ function proposalFrom(result: Record<string, unknown>): AgentProposal {
   };
 }
 
-function evidenceFrom(result: Record<string, unknown>): EvidenceItem[] {
+function evidenceFrom(task: ResearchTask, result: Record<string, unknown>): EvidenceItem[] {
   if (!Array.isArray(result.evidence)) return [];
   const states = new Set(["筹划中", "预案披露", "持续推进", "待人工核验", "已否认", "已完成"]);
   return result.evidence.flatMap((item, index) => {
@@ -93,11 +93,12 @@ function evidenceFrom(result: Record<string, unknown>): EvidenceItem[] {
     const value = item as Record<string, unknown>;
     if (typeof value.title !== "string" || !value.title.trim()) return [];
     const disclosedAt = typeof value.disclosedAt === "string" ? value.disclosedAt : "";
+    if (!isValidEvidenceDate(disclosedAt, task.cutoffDate)) return [];
     return [{
       id: `agent-${Date.now()}-${index}`,
       title: value.title,
       publisher: typeof value.publisher === "string" && value.publisher ? value.publisher : "iFinD 检索结果",
-      sourceUrl: typeof value.sourceUrl === "string" ? value.sourceUrl : "",
+      sourceUrl: isSafeUrl(value.sourceUrl) ? value.sourceUrl : "",
       sourceLabel: typeof value.sourceLabel === "string" ? value.sourceLabel : "待补原文链接",
       sourceTier: value.sourceTier === "交易所/公司公告" || value.sourceTier === "公司投资者关系" || value.sourceTier === "媒体报道" || value.sourceTier === "用户导入" ? value.sourceTier : "媒体报道",
       contentKind: value.contentKind === "事实" || value.contentKind === "观点" || value.contentKind === "推测" || value.contentKind === "传闻" ? value.contentKind : "事实",
@@ -111,6 +112,20 @@ function evidenceFrom(result: Record<string, unknown>): EvidenceItem[] {
       statusEffect: typeof value.statusEffect === "string" && states.has(value.statusEffect) ? value.statusEffect as EvidenceItem["statusEffect"] : undefined,
     }];
   });
+}
+
+function isValidEvidenceDate(value: string, cutoffDate: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value > cutoffDate) return false;
+  return new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+}
+
+function isSafeUrl(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 export async function POST(request: Request) {
@@ -194,7 +209,7 @@ export async function POST(request: Request) {
     const proposal = proposalFrom(result);
     const decision = result.decision as string;
     const status: AgentRun["status"] = decision === "无状态变化" ? "无状态变化" : decision === "待人工核验" || proposal.requiresReview ? "待人工核验" : "待用户确认";
-    const run: AgentRun = { id: `run-${Date.now()}`, status, startedAt, endedAt: new Date().toISOString(), stopReason: (result.stopReason as string) || "已完成有限工具调用。", toolCalls: traces, proposal, evidence: evidenceFrom(result) };
+    const run: AgentRun = { id: `run-${Date.now()}`, status, startedAt, endedAt: new Date().toISOString(), stopReason: (result.stopReason as string) || "已完成有限工具调用。", toolCalls: traces, proposal, evidence: evidenceFrom(payload.data.task, result) };
     return NextResponse.json({ run });
   } catch {
     const run = failedRun(startedAt, traces, "Agent 或 MCP 服务暂不可用；没有生成或写入任何正式结论。");

@@ -169,11 +169,11 @@ export default function Home() {
         <section className="research-hero">
           <p className="eyebrow">START WITH A RESEARCH QUESTION</p>
           <h1>开始研究一个投资事件</h1>
-          <p>输入标的与事件线索。Agent 将规划 iFinD MCP 检索、比较证据，并把不确定结论留给你确认。</p>
+          <p>输入标的与足以识别同一事件的线索。Agent 将规划 iFinD MCP 检索、比较证据，并把不确定结论留给你确认。</p>
           <div className="research-card panel">
-            <div className="research-step"><span>01</span><div><b>定义研究任务</b><small>不需要先知道公告编号；自然语言描述即可。</small></div></div>
+            <div className="research-step"><span>01</span><div><b>定义研究任务</b><small>不需要先知道公告编号；请带上交易对手、标的或事件名称，避免“收购”这类宽泛检索。</small></div></div>
             <label>公司 / 标的<input value={task.companyQuery} onChange={(event) => setTask({ ...task, companyQuery: event.target.value })} placeholder="例如：宁德时代 300750、特斯拉" /></label>
-            <label>事件关键词<input value={task.eventQuery} onChange={(event) => setTask({ ...task, eventQuery: event.target.value })} placeholder="例如：定增、并购重组、业绩预告、供应链中断" /></label>
+            <label>事件关键词<input value={task.eventQuery} onChange={(event) => setTask({ ...task, eventQuery: event.target.value })} placeholder="例如：收购 ××公司、定增、并购重组、业绩预告" /></label>
             <label>历史截点<input type="date" value={task.cutoffDate} onChange={(event) => setTask({ ...task, cutoffDate: event.target.value })} /></label>
             {error && <div className="error-box">{error}</div>}
             <button className="primary-button research-button" onClick={startResearch} disabled={monitoring}>{monitoring ? "Agent 正在检索证据…" : "让 Agent 开始研究 →"}</button>
