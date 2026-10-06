@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { evidenceFromImport, nextState } from "@/lib/evidence";
 import { EVENT_META, SEED_EVIDENCE, SEED_VERSIONS } from "@/lib/seed-data";
-import type { AgentProposal, EvidenceItem, EventState, EventVersion, ImportedMaterial } from "@/lib/types";
+import type { AgentProposal, AgentRun, EvidenceItem, EventState, EventVersion, ImportedMaterial } from "@/lib/types";
 
 const STORAGE_KEY = "signaltrace-hygon-sugon-v1";
 
@@ -33,15 +33,18 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [agentRuns, setAgentRuns] = useState<AgentRun[]>([]);
+  const [monitoring, setMonitoring] = useState(false);
 
   useEffect(() => {
     const saved = window.localStorage.getItem(STORAGE_KEY);
     if (!saved) return;
     const frame = window.requestAnimationFrame(() => {
       try {
-        const parsed = JSON.parse(saved) as { evidence: EvidenceItem[]; versions: EventVersion[] };
+        const parsed = JSON.parse(saved) as { evidence: EvidenceItem[]; versions: EventVersion[]; agentRuns?: AgentRun[] };
         setEvidence(parsed.evidence);
         setVersions(parsed.versions);
+        setAgentRuns(parsed.agentRuns ?? []);
       } catch {
         window.localStorage.removeItem(STORAGE_KEY);
       }
@@ -51,8 +54,8 @@ export default function Home() {
 
   useEffect(() => {
     if (evidence.length === SEED_EVIDENCE.length && versions.length === SEED_VERSIONS.length) return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ evidence, versions }));
-  }, [evidence, versions]);
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ evidence, versions, agentRuns: agentRuns.slice(0, 5) }));
+  }, [agentRuns, evidence, versions]);
 
   const current = versions[versions.length - 1];
   const timeline = useMemo(() => [...evidence].sort((a, b) => a.disclosedAt.localeCompare(b.disclosedAt)), [evidence]);
@@ -74,6 +77,26 @@ export default function Home() {
       setError(requestError instanceof Error ? requestError.message : "AI 分析失败");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function monitor() {
+    setError(null);
+    setMonitoring(true);
+    try {
+      const response = await fetch("/api/monitor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentState: current.state, currentConclusion: current.conclusion }),
+      });
+      const data = (await response.json()) as { run?: AgentRun; error?: string };
+      if (!data.run) throw new Error(data.error || "监测没有返回运行记录");
+      setAgentRuns((runs) => [data.run!, ...runs].slice(0, 5));
+      setNotice(data.run.status === "待用户确认" ? "Agent 已完成 iFinD 数据核查并生成草案；仍需补齐可直达原文后才能写入正式时间线。" : `本次监测已停止：${data.run.stopReason}`);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Agent 监测失败");
+    } finally {
+      setMonitoring(false);
     }
   }
 
@@ -166,6 +189,13 @@ export default function Home() {
             <h3>{selected.title}</h3><blockquote>“{selected.quote}”</blockquote><p>{selected.impact}</p>
             <dl><div><dt>发生</dt><dd>{selected.occurredAt}</dd></div><div><dt>披露</dt><dd>{selected.disclosedAt}</dd></div><div><dt>抓取</dt><dd>{formatDate(selected.capturedAt)}</dd></div></dl>
             <a href={selected.sourceUrl} target="_blank" rel="noreferrer">打开原始来源 ↗</a>
+          </article>
+
+          <article className="panel monitor-card">
+            <div className="panel-heading"><span>Agent 监测运行</span><small>最多 4 次工具调用</small></div>
+            <p className="form-note">固定查询 2025.05.01—09.06：公告、新闻、披露事件和历史行情。模型只决定查什么；MCP 返回与状态变更都受规则和人工确认约束。</p>
+            <button className="primary-button" onClick={monitor} disabled={monitoring}>{monitoring ? "正在调用 iFinD 工具…" : "立即监测历史快照"}</button>
+            {agentRuns[0] && <div className="run-card"><div><span className={`status-mini ${agentRuns[0].status === "失败" ? "tone-red" : agentRuns[0].status === "待用户确认" ? "tone-violet" : "tone-amber"}`}>{agentRuns[0].status}</span><small>{agentRuns[0].toolCalls.length} 次工具调用</small></div><p>{agentRuns[0].stopReason}</p>{agentRuns[0].toolCalls.map((trace) => <div className="run-trace" key={`${agentRuns[0].id}-${trace.tool}`}><b>{trace.status === "完成" ? "✓" : "!"} {trace.tool}</b><span>{trace.source}</span></div>)}{agentRuns[0].proposal && <p className="run-proposal"><b>草案：</b>{agentRuns[0].proposal.suggestedConclusion}</p>}</div>}
           </article>
 
           <article className="panel import-card">
