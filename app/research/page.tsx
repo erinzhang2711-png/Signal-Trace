@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import type { AgentRun, EvidenceItem, EventState, ResearchTask } from "@/lib/types";
@@ -15,6 +15,10 @@ const stateTone: Record<EventState, string> = {
 };
 
 export default function ResearchPage() {
+  return <Suspense fallback={<ResearchLoading />}>\n+    <ResearchWorkspace />\n+  </Suspense>;
+}
+
+function ResearchWorkspace() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const task = useMemo<ResearchTask>(() => ({
@@ -76,6 +80,10 @@ export default function ResearchPage() {
       {run && <><div className="section-title"><p className="eyebrow">AGENT EXECUTION TRACE</p><h2>从任务到证据，而不是从回答到结论</h2></div><AgentRunPanel run={run} task={task} /><ResearchTimeline task={task} evidence={run.evidence ?? []} /><div className="next-step"><b>下一步</b><span>候选证据中没有直达原文的材料只能停留在待核验层；补齐权威 URL/正文后才能建立正式结论。</span></div><button className="return-button" onClick={() => void runResearch()}>重新运行本次研究</button></>}
     </section>
   </main>;
+}
+
+function ResearchLoading() {
+  return <main><header className="topbar"><div className="topbar-left"><div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div></div><div className="topbar-meta">金融事件证据 Agent <span className="divider" /> 不构成投资建议</div></header><section className="execution-section result-content"><div className="research-loading panel"><span className="live-dot" />正在载入研究任务…</div></section></main>;
 }
 
 function AgentRunPanel({ run, task }: { run: AgentRun; task: ResearchTask }) {
