@@ -3,10 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { evidenceFromImport, nextState } from "@/lib/evidence";
-import { DEMO_LIFECYCLE_SCENARIOS, EVENT_META, SEED_EVIDENCE, SEED_VERSIONS, type DemoLifecycleScenario } from "@/lib/seed-data";
+import { EVENT_META, SEED_EVIDENCE, SEED_VERSIONS } from "@/lib/seed-data";
 import type { AgentProposal, AgentRun, EvidenceItem, EventState, EventVersion, ImportedMaterial, ResearchTask } from "@/lib/types";
 
-const STORAGE_KEY = "signaltrace-hygon-sugon-v1";
+const STORAGE_KEY = "signaltrace-hygon-sugon-v2";
 const DEMO_TASK: ResearchTask = { companyQuery: "海光信息 688041、中科曙光 603019", eventQuery: "换股吸收合并 重大资产重组", cutoffDate: "2025-09-06" };
 const EMPTY_TASK: ResearchTask = { companyQuery: "", eventQuery: "", cutoffDate: new Date().toISOString().slice(0, 10) };
 
@@ -178,26 +178,6 @@ export default function Home() {
     setNotice("已填入无来源传闻示例：用于演示 Agent 不会把未经证实的信息写入正式结论。");
   }
 
-  function applyLifecycleScenario(scenario: DemoLifecycleScenario) {
-    if (evidence.some((item) => item.id === scenario.evidence.id)) {
-      setSelected(scenario.evidence);
-      setNotice(`“${scenario.label}”演练已在当前工作台中；可在时间线查看其规则处理结果。`);
-      return;
-    }
-    setEvidence((items) => [...items, scenario.evidence]);
-    if (scenario.version) {
-      const version: EventVersion = {
-        ...scenario.version,
-        id: `scenario-v-${scenario.id}`,
-        createdAt: scenario.evidence.updatedAt,
-        evidenceIds: [scenario.evidence.id],
-      };
-      setVersions((items) => [...items, version]);
-    }
-    setSelected(scenario.evidence);
-    setNotice(`生命周期演练完成：${scenario.expectedOutcome}`);
-  }
-
   function resetDemo() {
     window.localStorage.removeItem(STORAGE_KEY);
     setEvidence(SEED_EVIDENCE);
@@ -252,11 +232,6 @@ export default function Home() {
       </section>
 
       {notice && <div className="notice" role="status"><span>✓</span>{notice}<button onClick={() => setNotice(null)}>关闭</button></div>}
-
-      <section className="scenario-strip" aria-label="验证结论如何变化">
-        <div className="scenario-strip-heading"><p className="eyebrow">TRY THE GOVERNANCE LOOP</p><h2>验证结论如何变化</h2><p>这不是另一套功能，而是同一事件在新材料出现时的三种处理结果。</p></div>
-        <div className="scenario-strip-actions">{DEMO_LIFECYCLE_SCENARIOS.map((scenario, index) => <button className="scenario-action" key={scenario.id} onClick={() => applyLifecycleScenario(scenario)}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{scenario.label}</b><small>{scenario.expectedOutcome}</small></div></button>)}</div>
-      </section>
 
       <section className="dashboard">
         <aside className="left-column">
