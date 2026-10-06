@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import type { AgentRun, AgentToolTrace, EvidenceItem, EventState, ResearchTask } from "@/lib/types";
+import type { AgentRun, EvidenceItem, EventState, ResearchTask } from "@/lib/types";
 
 const stateTone: Record<EventState, string> = {
   "筹划中": "tone-amber",
@@ -68,6 +68,8 @@ function ResearchWorkspace() {
     void runResearch();
   }, [runResearch, taskKey]);
 
+  if (run) return <ResearchDashboard task={task} run={run} onBack={() => router.push("/")} onRerun={() => void runResearch()} />;
+
   return <main>
     <header className="topbar">
       <div className="topbar-left"><div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div><button className="topbar-start" onClick={() => router.push("/")}>← 修改研究任务</button></div>
@@ -81,7 +83,50 @@ function ResearchWorkspace() {
     <section className="execution-section result-content">
       {loading && <div className="research-loading panel"><span className="live-dot" />Agent 正在调用 iFinD MCP 检索公告、新闻、披露事件与历史市场背景…</div>}
       {error && <div className="error-box">{error}</div>}
-      {run && <><div className="section-title"><p className="eyebrow">AGENT EXECUTION TRACE</p><h2>从任务到证据，而不是从回答到结论</h2></div><AgentRunPanel run={run} task={task} /><ResearchTimeline task={task} evidence={run.evidence ?? []} toolCalls={run.toolCalls} /><div className="next-step"><b>下一步</b><span>候选证据中没有直达原文的材料只能停留在待核验层；补齐权威 URL/正文后才能建立正式结论。</span></div><button className="return-button" onClick={() => void runResearch()}>重新运行本次研究</button></>}
+    </section>
+  </main>;
+}
+
+function ResearchDashboard({ task, run, onBack, onRerun }: { task: ResearchTask; run: AgentRun; onBack: () => void; onRerun: () => void }) {
+  const evidence = useMemo<EvidenceItem[]>(() => {
+    if (run.evidence?.length) return [...run.evidence].sort((left, right) => left.disclosedAt.localeCompare(right.disclosedAt));
+    return run.toolCalls.filter((trace) => trace.status === "完成" && trace.excerpt).map((trace, index) => ({
+      id: `raw-${trace.tool}-${index}`,
+      title: `${trace.source} 返回的待归并材料`,
+      publisher: trace.source,
+      sourceUrl: "",
+      sourceLabel: "MCP 原始检索片段 · 待补原文链接",
+      sourceTier: "媒体报道" as const,
+      contentKind: "事实" as const,
+      occurredAt: trace.capturedAt.slice(0, 10),
+      disclosedAt: trace.capturedAt.slice(0, 10),
+      capturedAt: trace.capturedAt,
+      updatedAt: trace.capturedAt,
+      quote: "",
+      summary: trace.excerpt ?? trace.summary,
+      impact: "工具已返回材料，但 Agent 尚未归并为同一事件证据；不会改变正式结论。",
+      statusEffect: "待人工核验" as const,
+    }));
+  }, [run]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = evidence.find((item) => item.id === selectedId) ?? evidence[0];
+  const state = run.proposal?.proposedState ?? "待人工核验";
+  const conclusion = run.proposal?.suggestedConclusion || (evidence.length ? "已检索到候选材料，正在等待 Agent 归并与原文核验；当前不建立正式事件结论。" : "本次未检索到可展示材料，正式事件状态保持待人工核验。");
+
+  return <main>
+    <header className="topbar"><div className="topbar-left"><div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div><button className="topbar-start" onClick={onBack}>← 开始新研究</button></div><div className="topbar-meta">金融事件证据 Agent <span className="divider" /> 不构成投资建议</div></header>
+    <section className="hero"><div><p className="eyebrow">EVIDENCE-FIRST EVENT INTELLIGENCE</p><h1>{task.companyQuery}</h1><p className="subtitle">{task.eventQuery} · 截至 {task.cutoffDate} 的可追溯研究快照</p></div><div className="watchlist"><span>研究标的</span><b>{task.companyQuery}</b></div></section>
+    <section className="dashboard">
+      <aside className="left-column">
+        <article className="panel conclusion-card"><div className="panel-label">当前事件状态</div><div className="state-row"><span className={`status-pill ${stateTone[state]}`}>{state}</span><span className="version">本次运行</span></div><p>{conclusion}</p><div className="risk-callout"><strong>风险提示</strong><span>候选材料不等于正式结论；未直达原文或未识别交易对手时，系统不会升级事件状态。</span></div></article>
+        <article className="panel market-card"><div className="panel-heading"><span>检索覆盖</span><small>非因果验证</small></div><div className="market-grid"><div><span>工具调用</span><b>{run.toolCalls.length} 次</b></div><div><span>候选材料</span><b>{evidence.length} 条</b></div><div><span>数据口径</span><b>历史快照</b></div></div><p className="fine-print">公告、新闻、披露事件与市场背景由 MCP 查询；市场数据仅作上下文，不输出涨跌预测或买卖建议。</p></article>
+        <article className="panel version-card"><div className="panel-heading"><span>结论演化</span><small>1 个版本</small></div><ol className="versions"><li><i className={stateTone[state]} /><div><b>{state}</b><span>{task.cutoffDate}</span><p>{run.stopReason}</p></div></li></ol></article>
+      </aside>
+      <section className="center-column panel"><div className="timeline-header"><div><div className="panel-label">证据时间线</div><h2>同一事件，不同可信度</h2></div><span>{evidence.length} 条候选材料</span></div><div className="legend"><span><i className="dot official" />交易所/公司公告</span><span><i className="dot ir" />投资者关系</span><span><i className="dot user" />待归并材料</span></div><div className="timeline">{evidence.length ? evidence.map((item) => <button className={`timeline-item ${selected?.id === item.id ? "selected" : ""}`} key={item.id} onClick={() => setSelectedId(item.id)}><div className="date"><b>{item.disclosedAt}</b><span>{item.sourceTier}</span></div><i className={`line-dot ${item.sourceTier === "交易所/公司公告" ? "official" : item.sourceTier === "公司投资者关系" ? "ir" : "user"}`} /><div className="timeline-copy"><div><span className="kind-tag">{item.contentKind}</span>{item.statusEffect && <span className={`status-mini ${stateTone[item.statusEffect]}`}>{item.statusEffect}</span>}</div><h3>{item.title}</h3><p>{item.summary}</p><small>{item.publisher}</small></div></button>) : <div className="timeline-empty">本次没有检索到可展示材料。请补充公司代码、交易对手或更具体的事件名称后重新运行。</div>}</div></section>
+      <aside className="right-column">
+        <article className="panel evidence-card"><div className="panel-heading"><span>证据详情</span><span className={`source-tag ${selected?.sourceTier === "交易所/公司公告" ? "official" : "user"}`}>{selected?.sourceTier ?? "待核验"}</span></div>{selected ? <><h3>{selected.title}</h3>{selected.quote && <blockquote>“{selected.quote}”</blockquote>}<p>{selected.impact}</p><dl><div><dt>披露 / 抓取</dt><dd>{selected.disclosedAt}</dd></div><div><dt>来源</dt><dd>{selected.publisher}</dd></div></dl><small className="source-reference">{selected.sourceLabel}</small>{selected.sourceUrl ? <a href={selected.sourceUrl} target="_blank" rel="noreferrer">打开公告原文 ↗</a> : <span className="fine-print">暂无直达原文，保留为待归并材料。</span>}</> : <p className="fine-print">选择时间线节点后查看材料详情。</p>}</article>
+        <article className="panel monitor-card"><div className="panel-heading"><span>Agent 监测运行</span><small>最多 4 次工具调用</small></div><p className="form-note">Agent 负责规划检索、比较材料与生成草案；规则层阻止无来源材料直接改写结论。</p><button className="primary-button" onClick={onRerun}>重新运行本次研究</button><AgentRunPanel run={run} task={task} /></article>
+      </aside>
     </section>
   </main>;
 }
@@ -98,19 +143,4 @@ function AgentRunPanel({ run, task }: { run: AgentRun; task: ResearchTask }) {
     {run.toolCalls.map((trace, index) => <div className="run-trace" key={`${run.id}-${trace.tool}`}><b>{index + 1}. {trace.status === "完成" ? "✓" : "!"} {trace.tool}</b><span>{trace.source} · {trace.summary}</span></div>)}
     {run.proposal && <div className="run-proposal"><b>Agent 草案</b><span>{run.proposal.suggestedConclusion}</span>{run.proposal.conflict && <small>冲突：{run.proposal.conflict}</small>}</div>}
   </div>;
-}
-
-function ResearchTimeline({ task, evidence, toolCalls }: { task: ResearchTask; evidence: EvidenceItem[]; toolCalls: AgentToolTrace[] }) {
-  const ordered = [...evidence].sort((left, right) => left.disclosedAt.localeCompare(right.disclosedAt));
-  const rawResults = toolCalls.filter((trace) => trace.status === "完成" && trace.excerpt);
-  return <section className="research-timeline panel">
-    <div className="timeline-header"><div><div className="panel-label">候选证据时间线</div><h2>{task.companyQuery} · {task.eventQuery}</h2></div><span>{ordered.length} 条从 MCP 提取的候选证据</span></div>
-    {ordered.length === 0 && rawResults.length > 0 ? <div className="research-timeline-list">{rawResults.map((trace) => <article className="research-timeline-item" key={`${trace.tool}-${trace.capturedAt}`}>
-      <div className="research-date"><b>本次抓取</b><span>待归并</span></div>
-      <div className="research-timeline-copy"><div><span className="kind-tag">原始材料</span><span className="status-mini tone-amber">待人工核验</span></div><h3>{trace.source} · {trace.tool}</h3><p>{trace.excerpt}</p><small>{trace.summary}</small><em>该材料已由 MCP 返回，但尚未被归并为同一事件的正式证据；不会改变当前结论。</em></div>
-    </article>)}</div> : ordered.length === 0 ? <div className="timeline-empty">本次检索没有返回可展示的材料。请补充交易对手、标的或事件名称后重试。</div> : <div className="research-timeline-list">{ordered.map((item) => <article className="research-timeline-item" key={item.id}>
-      <div className="research-date"><b>{item.disclosedAt}</b><span>{item.sourceTier}</span></div>
-      <div className="research-timeline-copy"><div><span className="kind-tag">{item.contentKind}</span>{item.statusEffect && <span className={`status-mini ${stateTone[item.statusEffect]}`}>{item.statusEffect}</span>}</div><h3>{item.title}</h3><p>{item.summary || "该条材料仅保留了标题与原文片段。"}</p>{item.quote && <blockquote>“{item.quote}”</blockquote>}<small>{item.publisher} · {item.sourceLabel || "待补原文链接"}</small>{item.sourceUrl ? <a href={item.sourceUrl} target="_blank" rel="noreferrer">打开原始来源 ↗</a> : <em>未提供可直达原文，不能写入正式结论</em>}</div>
-    </article>)}</div>}
-  </section>;
 }
