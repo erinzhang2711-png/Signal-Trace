@@ -61,6 +61,11 @@ function textFromResult(content: unknown): string {
   return joined ? joined.slice(0, 12_000) : "MCP 未返回可展示的文本结果。";
 }
 
+function resultExcerpt(output: string) {
+  if (output.startsWith("工具调用失败") || output.startsWith("工具不可用") || output.startsWith("MCP 未返回")) return "";
+  return output.replace(/\s+/g, " ").trim().slice(0, 420);
+}
+
 type UnknownRecord = Record<string, unknown>;
 
 const TITLE_KEYS = ["title", "headline", "name", "notice_title", "news_title", "标题", "公告标题", "新闻标题"];
@@ -231,7 +236,7 @@ export async function runIFindTool(tool: AgentToolName, task: ResearchTask): Pro
     const result = await client.callTool({ name: call.tool, arguments: call.arguments }, { timeout: 15_000 });
     const output = textFromResult(result.content);
     const candidates = extractMcpEvidence(output, tool, task, capturedAt);
-    return { trace: { tool, source, status: "完成", capturedAt, summary: `${call.tool} 已返回 ${output.length} 字符的可审阅结果；代码提取 ${candidates.length} 条候选材料。` }, output, candidates };
+    return { trace: { tool, source, status: "完成", capturedAt, summary: `${call.tool} 已返回 ${output.length} 字符的可审阅结果；代码提取 ${candidates.length} 条候选材料。`, excerpt: resultExcerpt(output) }, output, candidates };
   } catch {
     return { trace: { tool, source, status: "失败", capturedAt, summary: "MCP 调用失败；本次不会据此生成正式结论。" }, output: "工具调用失败，未取得数据。", candidates: [] };
   } finally {

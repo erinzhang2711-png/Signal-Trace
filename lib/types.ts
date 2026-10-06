@@ -64,6 +64,7 @@ export type AgentToolTrace = {
   status: "完成" | "失败" | "跳过";
   capturedAt: string;
   summary: string;
+  excerpt?: string;
 };
 
 export type AgentRun = {

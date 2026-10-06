@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import type { AgentRun, EvidenceItem, EventState, ResearchTask } from "@/lib/types";
+import type { AgentRun, AgentToolTrace, EvidenceItem, EventState, ResearchTask } from "@/lib/types";
 
 const stateTone: Record<EventState, string> = {
   "筹划中": "tone-amber",
@@ -81,7 +81,7 @@ function ResearchWorkspace() {
     <section className="execution-section result-content">
       {loading && <div className="research-loading panel"><span className="live-dot" />Agent 正在调用 iFinD MCP 检索公告、新闻、披露事件与历史市场背景…</div>}
       {error && <div className="error-box">{error}</div>}
-      {run && <><div className="section-title"><p className="eyebrow">AGENT EXECUTION TRACE</p><h2>从任务到证据，而不是从回答到结论</h2></div><AgentRunPanel run={run} task={task} /><ResearchTimeline task={task} evidence={run.evidence ?? []} /><div className="next-step"><b>下一步</b><span>候选证据中没有直达原文的材料只能停留在待核验层；补齐权威 URL/正文后才能建立正式结论。</span></div><button className="return-button" onClick={() => void runResearch()}>重新运行本次研究</button></>}
+      {run && <><div className="section-title"><p className="eyebrow">AGENT EXECUTION TRACE</p><h2>从任务到证据，而不是从回答到结论</h2></div><AgentRunPanel run={run} task={task} /><ResearchTimeline task={task} evidence={run.evidence ?? []} toolCalls={run.toolCalls} /><div className="next-step"><b>下一步</b><span>候选证据中没有直达原文的材料只能停留在待核验层；补齐权威 URL/正文后才能建立正式结论。</span></div><button className="return-button" onClick={() => void runResearch()}>重新运行本次研究</button></>}
     </section>
   </main>;
 }
@@ -100,11 +100,15 @@ function AgentRunPanel({ run, task }: { run: AgentRun; task: ResearchTask }) {
   </div>;
 }
 
-function ResearchTimeline({ task, evidence }: { task: ResearchTask; evidence: EvidenceItem[] }) {
+function ResearchTimeline({ task, evidence, toolCalls }: { task: ResearchTask; evidence: EvidenceItem[]; toolCalls: AgentToolTrace[] }) {
   const ordered = [...evidence].sort((left, right) => left.disclosedAt.localeCompare(right.disclosedAt));
+  const rawResults = toolCalls.filter((trace) => trace.status === "完成" && trace.excerpt);
   return <section className="research-timeline panel">
     <div className="timeline-header"><div><div className="panel-label">候选证据时间线</div><h2>{task.companyQuery} · {task.eventQuery}</h2></div><span>{ordered.length} 条从 MCP 提取的候选证据</span></div>
-    {ordered.length === 0 ? <div className="timeline-empty">本次 MCP 返回没有可安全结构化的同一事件证据节点。请在事件关键词中补充交易对手、标的或事件名称，例如“收购 ××公司”，再重试。</div> : <div className="research-timeline-list">{ordered.map((item) => <article className="research-timeline-item" key={item.id}>
+    {ordered.length === 0 && rawResults.length > 0 ? <div className="research-timeline-list">{rawResults.map((trace) => <article className="research-timeline-item" key={`${trace.tool}-${trace.capturedAt}`}>
+      <div className="research-date"><b>本次抓取</b><span>待归并</span></div>
+      <div className="research-timeline-copy"><div><span className="kind-tag">原始材料</span><span className="status-mini tone-amber">待人工核验</span></div><h3>{trace.source} · {trace.tool}</h3><p>{trace.excerpt}</p><small>{trace.summary}</small><em>该材料已由 MCP 返回，但尚未被归并为同一事件的正式证据；不会改变当前结论。</em></div>
+    </article>)}</div> : ordered.length === 0 ? <div className="timeline-empty">本次检索没有返回可展示的材料。请补充交易对手、标的或事件名称后重试。</div> : <div className="research-timeline-list">{ordered.map((item) => <article className="research-timeline-item" key={item.id}>
       <div className="research-date"><b>{item.disclosedAt}</b><span>{item.sourceTier}</span></div>
       <div className="research-timeline-copy"><div><span className="kind-tag">{item.contentKind}</span>{item.statusEffect && <span className={`status-mini ${stateTone[item.statusEffect]}`}>{item.statusEffect}</span>}</div><h3>{item.title}</h3><p>{item.summary || "该条材料仅保留了标题与原文片段。"}</p>{item.quote && <blockquote>“{item.quote}”</blockquote>}<small>{item.publisher} · {item.sourceLabel || "待补原文链接"}</small>{item.sourceUrl ? <a href={item.sourceUrl} target="_blank" rel="noreferrer">打开原始来源 ↗</a> : <em>未提供可直达原文，不能写入正式结论</em>}</div>
     </article>)}</div>}
