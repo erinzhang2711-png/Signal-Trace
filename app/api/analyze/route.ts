@@ -6,7 +6,7 @@ import { getLLMRuntime } from "@/lib/llm";
 const inputSchema = z.object({
   title: z.string().trim().min(3).max(160),
   publisher: z.string().trim().max(120).optional().default(""),
-  sourceUrl: z.string().trim().url(),
+  sourceUrl: z.union([z.literal(""), z.string().trim().url()]),
   disclosedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   body: z.string().trim().min(30).max(12000),
 });
@@ -49,7 +49,7 @@ quote 必须是输入材料中可逐字找到的短句；若无法找到足够�
 export async function POST(request: Request) {
   const parsed = inputSchema.safeParse(await request.json());
   if (!parsed.success) {
-    return NextResponse.json({ error: "请补齐标题、披露日期、有效来源 URL 和至少 30 字的材料正文。" }, { status: 400 });
+    return NextResponse.json({ error: "请补齐标题、披露日期和至少 30 字的材料正文；缺少来源 URL 的材料会被隔离到人工核验。" }, { status: 400 });
   }
 
   const runtime = getLLMRuntime();

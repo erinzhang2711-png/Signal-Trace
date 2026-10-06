@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { evidenceFromImport, nextState } from "@/lib/evidence";
-import { EVENT_META, SEED_EVIDENCE, SEED_VERSIONS } from "@/lib/seed-data";
+import { DEMO_LIFECYCLE_SCENARIOS, EVENT_META, SEED_EVIDENCE, SEED_VERSIONS, type DemoLifecycleScenario } from "@/lib/seed-data";
 import type { AgentProposal, AgentRun, EvidenceItem, EventState, EventVersion, ImportedMaterial, ResearchTask } from "@/lib/types";
 
 const STORAGE_KEY = "signaltrace-hygon-sugon-v1";
@@ -21,6 +21,10 @@ const stateTone: Record<EventState, string> = {
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric", year: "numeric" }).format(new Date(value));
+}
+
+function formatTimestamp(value: string) {
+  return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value));
 }
 
 function blankMaterial(): ImportedMaterial {
@@ -144,16 +148,19 @@ export default function Home() {
     if (!proposal) return;
     const state = nextState(current.state, proposal, material);
     const item = evidenceFromImport(material, proposal, state);
-    const version: EventVersion = {
-      id: `v-${Date.now()}`,
-      createdAt: new Date().toISOString(),
-      state,
-      conclusion: state === "待人工核验" ? current.conclusion : proposal.suggestedConclusion,
-      changeReason: state === "待人工核验" ? "材料证据不足或来源等级不足，已进入人工核验队列。" : proposal.rationale,
-      evidenceIds: [item.id],
-    };
     setEvidence((items) => [...items, item]);
-    setVersions((items) => [...items, version]);
+    if (state !== "待人工核验") {
+      const version: EventVersion = {
+        id: `v-${Date.now()}`,
+        createdAt: new Date().toISOString(),
+        state,
+        conclusion: proposal.suggestedConclusion,
+        changeReason: proposal.rationale,
+        evidenceIds: [item.id],
+        kind: proposal.proposedState === "已否认" ? "否认" : "更新",
+      };
+      setVersions((items) => [...items, version]);
+    }
     setSelected(item);
     setNotice(state === "待人工核验" ? "已加入待人工核验队列，正式结论未改变。" : "已确认更新，事件时间线与当前结论已生成新版本。");
     setProposal(null);
@@ -169,6 +176,37 @@ export default function Home() {
       body: "市场流传消息称海光信息与中科曙光的交易已经完成，预计将直接提升相关公司收益。该消息未附公司公告、交易所链接或原始文件。",
     });
     setNotice("已填入无来源传闻示例：用于演示 Agent 不会把未经证实的信息写入正式结论。");
+  }
+
+  function applyLifecycleScenario(scenario: DemoLifecycleScenario) {
+    if (evidence.some((item) => item.id === scenario.evidence.id)) {
+      setSelected(scenario.evidence);
+      setNotice(`“${scenario.label}”演练已在当前工作台中；可在时间线查看其规则处理结果。`);
+      return;
+    }
+    setEvidence((items) => [...items, scenario.evidence]);
+    if (scenario.version) {
+      const version: EventVersion = {
+        ...scenario.version,
+        id: `scenario-v-${scenario.id}`,
+        createdAt: scenario.evidence.updatedAt,
+        evidenceIds: [scenario.evidence.id],
+      };
+      setVersions((items) => [...items, version]);
+    }
+    setSelected(scenario.evidence);
+    setNotice(`生命周期演练完成：${scenario.expectedOutcome}`);
+  }
+
+  function resetDemo() {
+    window.localStorage.removeItem(STORAGE_KEY);
+    setEvidence(SEED_EVIDENCE);
+    setVersions(SEED_VERSIONS);
+    setAgentRuns([]);
+    setSelected(SEED_EVIDENCE[SEED_EVIDENCE.length - 1]);
+    setProposal(null);
+    setMaterial(blankMaterial());
+    setNotice("已恢复为可复现的 2025-09-06 历史快照。");
   }
 
   if (mode === "start") {
@@ -236,7 +274,8 @@ export default function Home() {
 
           <article className="panel version-card">
             <div className="panel-heading"><span>结论演化</span><small>{versions.length} 个版本</small></div>
-            <ol className="versions">{versions.map((version) => <li key={version.id}><i className={stateTone[version.state]} /><div><b>{version.state}</b><span>{formatDate(version.createdAt)}</span><p>{version.changeReason}</p></div></li>)}</ol>
+            <ol className="versions">{versions.map((version) => <li key={version.id}><i className={stateTone[version.state]} /><div><b>{version.kind ? `${version.kind} · ` : ""}{version.state}</b><span>{formatDate(version.createdAt)}</span><p>{version.changeReason}</p></div></li>)}</ol>
+            {versions.length > SEED_VERSIONS.length && <button className="reset-demo" onClick={resetDemo}>恢复演示快照</button>}
           </article>
         </aside>
 
@@ -245,7 +284,7 @@ export default function Home() {
           <div className="legend"><span><i className="dot official" />交易所/公司公告</span><span><i className="dot ir" />投资者关系</span><span><i className="dot user" />用户导入</span></div>
           <div className="timeline">{timeline.map((item) => <button className={`timeline-item ${selected.id === item.id ? "selected" : ""}`} key={item.id} onClick={() => setSelected(item)}>
             <div className="date"><b>{formatDate(item.disclosedAt)}</b><span>披露</span></div><i className={`line-dot ${item.sourceTier === "交易所/公司公告" ? "official" : item.sourceTier === "公司投资者关系" ? "ir" : "user"}`} />
-            <div className="timeline-copy"><div><span className="kind-tag">{item.contentKind}</span>{item.statusEffect && <span className={`status-mini ${stateTone[item.statusEffect]}`}>{item.statusEffect}</span>}</div><h3>{item.title}</h3><p>{item.summary}</p><small>{item.publisher}</small></div>
+            <div className="timeline-copy"><div><span className="kind-tag">{item.contentKind}</span>{item.statusEffect && <span className={`status-mini ${stateTone[item.statusEffect]}`}>{item.statusEffect}</span>}{item.reviewOutcome && <span className="review-mini">{item.reviewOutcome}</span>}</div><h3>{item.title}</h3><p>{item.summary}</p><small>{item.publisher}</small></div>
           </button>)}</div>
         </section>
 
@@ -253,8 +292,8 @@ export default function Home() {
           <article className="panel evidence-card">
             <div className="panel-heading"><span>证据详情</span><span className={`source-tag ${selected.sourceTier === "交易所/公司公告" ? "official" : "user"}`}>{selected.sourceTier}</span></div>
             <h3>{selected.title}</h3><blockquote>“{selected.quote}”</blockquote><p>{selected.impact}</p>
-            <dl><div><dt>发生</dt><dd>{selected.occurredAt}</dd></div><div><dt>披露</dt><dd>{selected.disclosedAt}</dd></div><div><dt>抓取</dt><dd>{formatDate(selected.capturedAt)}</dd></div></dl>
-            <small className="source-reference">{selected.sourceLabel ?? "用户导入材料"}</small><a href={selected.sourceUrl} target="_blank" rel="noreferrer">打开公告原文 ↗</a>
+            <dl><div><dt>发生时间</dt><dd>{selected.occurredAt}</dd></div><div><dt>披露时间</dt><dd>{selected.disclosedAt}</dd></div><div><dt>抓取时间</dt><dd>{formatTimestamp(selected.capturedAt)}</dd></div><div><dt>更新时间</dt><dd>{formatTimestamp(selected.updatedAt)}</dd></div></dl>
+            <small className="source-reference">{selected.sourceLabel ?? "用户导入材料"} · 处理结果：{selected.reviewOutcome ?? "待规则裁决"}</small>{selected.sourceUrl ? <a href={selected.sourceUrl} target="_blank" rel="noreferrer">打开公告原文 ↗</a> : <span className="missing-source">未提供可直达原文，不能作为正式结论依据</span>}
           </article>
 
           <article className="panel monitor-card">
@@ -274,6 +313,12 @@ export default function Home() {
             <button className="demo-link" onClick={useDemoMaterial}>填入“无来源传闻”测试样例</button>
             {error && <div className="error-box">{error}</div>}
             <button className="primary-button" onClick={analyze} disabled={loading}>{loading ? "正在生成证据提议…" : "让 Agent 分析线索"}</button>
+          </article>
+
+          <article className="panel lifecycle-card">
+            <div className="panel-heading"><span>生命周期演练</span><small>产品测试数据</small></div>
+            <p className="form-note">用于展示“更新、传闻隔离、更正/过期”如何影响证据与版本。演练材料不冒充真实市场披露。</p>
+            {DEMO_LIFECYCLE_SCENARIOS.map((scenario) => <button className="scenario-button" key={scenario.id} onClick={() => applyLifecycleScenario(scenario)}><b>{scenario.label}</b><span>{scenario.description}</span></button>)}
           </article>
 
           {proposal && <article className="panel proposal-card">

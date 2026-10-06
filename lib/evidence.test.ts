@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasMinimumEvidence, nextState, sourceTierFromPublisher } from "./evidence";
+import { evidenceFromImport, hasMinimumEvidence, nextState, sourceTierFromPublisher } from "./evidence";
 import type { AgentProposal, ImportedMaterial } from "./types";
 
 const material: ImportedMaterial = {
@@ -33,5 +33,13 @@ describe("evidence governance", () => {
     const rumor = { ...proposal, contentKind: "传闻" as const, proposedState: "已完成" as const };
     const unsourced = { ...material, publisher: "", sourceUrl: "" };
     expect(nextState("持续推进", rumor, unsourced)).toBe("待人工核验");
+  });
+
+  it("records a quarantined outcome for evidence that cannot change the event", () => {
+    const rumor = { ...proposal, contentKind: "传闻" as const, proposedState: "已完成" as const };
+    const unsourced = { ...material, publisher: "", sourceUrl: "" };
+    const item = evidenceFromImport(unsourced, rumor, nextState("持续推进", rumor, unsourced));
+    expect(item.reviewOutcome).toBe("待人工核验");
+    expect(item.statusEffect).toBe("待人工核验");
   });
 });

@@ -18,7 +18,10 @@ export type EvidenceItem = {
   summary: string;
   impact: string;
   statusEffect?: EventState;
+  reviewOutcome?: "支持当前结论" | "待人工核验" | "更正旧结论" | "已过期";
 };
+
+export type VersionKind = "首次披露" | "更新" | "更正" | "否认";
 
 export type EventVersion = {
   id: string;
@@ -27,6 +30,7 @@ export type EventVersion = {
   conclusion: string;
   changeReason: string;
   evidenceIds: string[];
+  kind?: VersionKind;
 };
 
 export type ImportedMaterial = {
