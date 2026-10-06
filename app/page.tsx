@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { evidenceFromImport, nextState } from "@/lib/evidence";
 import { EVENT_META, SEED_EVIDENCE, SEED_VERSIONS } from "@/lib/seed-data";
 import type { AgentProposal, AgentRun, EvidenceItem, EventState, EventVersion, ImportedMaterial, ResearchTask } from "@/lib/types";
@@ -27,6 +28,7 @@ function blankMaterial(): ImportedMaterial {
 }
 
 export default function Home() {
+  const router = useRouter();
   const [evidence, setEvidence] = useState<EvidenceItem[]>(SEED_EVIDENCE);
   const [versions, setVersions] = useState<EventVersion[]>(SEED_VERSIONS);
   const [material, setMaterial] = useState<ImportedMaterial>(blankMaterial);
@@ -118,7 +120,8 @@ export default function Home() {
       setError("请填写公司/标的与事件关键词，再启动 Agent。");
       return;
     }
-    void monitor(task);
+    const params = new URLSearchParams({ company: task.companyQuery.trim(), event: task.eventQuery.trim(), cutoff: task.cutoffDate });
+    router.push(`/research?${params.toString()}`);
   }
 
   function returnToResearchStart() {
