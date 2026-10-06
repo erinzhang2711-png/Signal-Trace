@@ -1,6 +1,7 @@
-import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+
+import { getLLMRuntime } from "@/lib/llm";
 
 const inputSchema = z.object({
   title: z.string().trim().min(3).max(160),
@@ -51,36 +52,34 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "请补齐标题、披露日期、有效来源 URL 和至少 30 字的材料正文。" }, { status: 400 });
   }
 
-  if (!process.env.OPENAI_API_KEY) {
+  const runtime = getLLMRuntime();
+  if (!runtime) {
     return NextResponse.json(
-      { error: "未配置 OPENAI_API_KEY。请在 .env.local 或 Vercel 环境变量中配置后重试。" },
+      { error: "未配置可用的模型服务。请配置 OPENAI_API_KEY，或学校网关的 HKUST_GENAI_API_KEY、AZURE_ENDPOINT、AZURE_CHAT_DEPLOYMENT。" },
       { status: 503 },
     );
   }
 
   try {
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const response = await client.responses.create({
-      model: process.env.OPENAI_MODEL || "gpt-5-mini",
-      input: [
-        { role: "system", content: SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: `标题：${parsed.data.title}\n发布者：${parsed.data.publisher || "未提供"}\n来源：${parsed.data.sourceUrl || "未提供"}\n披露日：${parsed.data.disclosedAt}\n\n材料正文：\n${parsed.data.body}`,
-        },
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "event_evidence_proposal",
-          strict: true,
-          schema: proposalSchema,
-        },
-      },
-    });
+    const userContent = `标题：${parsed.data.title}\n发布者：${parsed.data.publisher || "未提供"}\n来源：${parsed.data.sourceUrl || "未提供"}\n披露日：${parsed.data.disclosedAt}\n\n材料正文：\n${parsed.data.body}`;
+    if (runtime.api === "responses") {
+      const response = await runtime.client.responses.create({
+        model: runtime.model,
+        input: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: userContent }],
+        text: { format: { type: "json_schema", name: "event_evidence_proposal", strict: true, schema: proposalSchema } },
+      });
+      if (!response.output_text) throw new Error("模型未返回结构化内容");
+      return NextResponse.json({ proposal: JSON.parse(response.output_text) });
+    }
 
-    if (!response.output_text) throw new Error("模型未返回结构化内容");
-    return NextResponse.json({ proposal: JSON.parse(response.output_text) });
+    const completion = await runtime.client.chat.completions.create({
+      model: runtime.model,
+      messages: [{ role: "system", content: `${SYSTEM_PROMPT}\n只返回符合既定 JSON 字段的对象，不要使用 Markdown。` }, { role: "user", content: userContent }],
+      response_format: { type: "json_object" },
+    });
+    const output = completion.choices[0]?.message.content;
+    if (!output) throw new Error("模型未返回结构化内容");
+    return NextResponse.json({ proposal: JSON.parse(output) });
   } catch (error) {
     console.error("Evidence analysis failed", error);
     return NextResponse.json({ error: "AI 分析暂时不可用。未生成或写入任何事件结论，请稍后重试。" }, { status: 502 });
