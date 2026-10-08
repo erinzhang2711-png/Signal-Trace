@@ -7,6 +7,7 @@ import { evidenceFromImport, nextState, sourceTierFromPublisher } from "@/lib/ev
 import { marketReactionForEvent, returnFrom } from "@/lib/market";
 import { buildTimelineGroups, canonicalEventName, timelineStageLabel } from "@/lib/timeline";
 import { marketIdentityForTask } from "@/lib/market-identity";
+import { researchTaskWarning } from "@/lib/task-validation";
 import { followedEventId, readWatchlist, WATCHLIST_STORAGE_KEY, type FollowedEvent } from "@/lib/watchlist";
 import type { AgentProposal, AgentRun, EvidenceItem, EventState, ImportedMaterial, MarketSeries, ResearchTask } from "@/lib/types";
 
@@ -23,6 +24,28 @@ const stateTone: Record<EventState, string> = {
 
 function blankMaterial(): ImportedMaterial {
   return { title: "", publisher: "", sourceUrl: "", disclosedAt: new Date().toISOString().slice(0, 10), body: "" };
+}
+
+function isFormalSource(material: Pick<ImportedMaterial, "publisher" | "sourceUrl">) {
+  const tier = sourceTierFromPublisher(material.publisher, material.sourceUrl);
+  return tier === "交易所/公司公告" || tier === "公司投资者关系";
+}
+
+async function requestAnalysis(material: ImportedMaterial, task: ResearchTask): Promise<AgentProposal> {
+  const response = await fetch("/api/analyze", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...material, task }),
+  });
+  const raw = await response.text();
+  let data: { proposal?: AgentProposal; error?: string } = {};
+  try {
+    data = JSON.parse(raw) as { proposal?: AgentProposal; error?: string };
+  } catch {
+    throw new Error(`核验服务返回了非预期内容（HTTP ${response.status}），没有写入任何结论。`);
+  }
+  if (!response.ok || !data.proposal) throw new Error(data.error || `核验服务返回 HTTP ${response.status}，没有生成草案。`);
+  return data.proposal;
 }
 
 function securityLabels(companyQuery: string) {
@@ -54,11 +77,12 @@ function ResearchWorkspace() {
   const startedTask = useRef<string | null>(null);
   const taskKey = `${task.companyQuery}|${task.eventQuery}|${task.cutoffDate}`;
   const storageKey = `${RESEARCH_STORAGE_PREFIX}${taskKey}`;
-  const validTask = Boolean(task.companyQuery && task.eventQuery && /^\d{4}-\d{2}-\d{2}$/.test(task.cutoffDate));
+  const taskWarning = researchTaskWarning(task);
+  const validTask = Boolean(task.companyQuery && task.eventQuery && /^\d{4}-\d{2}-\d{2}$/.test(task.cutoffDate) && !taskWarning);
 
   const runResearch = useCallback(async () => {
     if (!validTask) {
-      setError("研究任务不完整，请返回首页重新填写公司、事件关键词和历史截点。");
+      setError(taskWarning || "研究任务不完整，请返回首页重新填写公司、事件关键词和历史截点。");
       setLoading(false);
       return;
     }
@@ -85,11 +109,16 @@ function ResearchWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, [task, validTask]);
+  }, [task, taskWarning, validTask]);
 
   useEffect(() => {
     if (startedTask.current === taskKey) return;
     startedTask.current = taskKey;
+    if (taskWarning) {
+      setError(taskWarning);
+      setLoading(false);
+      return;
+    }
     const saved = window.localStorage.getItem(storageKey);
     if (saved) {
       try {
@@ -101,7 +130,7 @@ function ResearchWorkspace() {
       }
     }
     void runResearch();
-  }, [runResearch, storageKey, taskKey]);
+  }, [runResearch, storageKey, taskKey, taskWarning]);
 
   useEffect(() => {
     if (run) window.localStorage.setItem(storageKey, JSON.stringify(run));
@@ -179,18 +208,20 @@ function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: Research
     setBatchReviewNote(null);
     setBatchReviewResults([]);
     const verified = await Promise.all(items.map(async (item) => {
+      const material = { title: item.title, publisher: item.publisher, sourceUrl: item.sourceUrl, disclosedAt: item.disclosedAt, body: item.quote || item.summary };
+      if (!isFormalSource(material)) {
+        return { id: item.id, title: item.title, outcome: "待人工核验" as const, reason: "这是媒体或未直达原文的候选线索，只能辅助定位；请补充交易所/公司原文后再进行证据质检。" };
+      }
       try {
-        const response = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: item.title, publisher: item.publisher, sourceUrl: item.sourceUrl, disclosedAt: item.disclosedAt, body: item.quote || item.summary, task }) });
-        const data = (await response.json()) as { proposal?: AgentProposal; error?: string };
-        if (!response.ok || !data.proposal) return { id: item.id, title: item.title, outcome: "未能核验" as const, reason: data.error || "核验服务未返回结构化结论。" };
-        const state = nextState("待人工核验", data.proposal, { title: item.title, publisher: item.publisher, sourceUrl: item.sourceUrl, disclosedAt: item.disclosedAt, body: item.quote || item.summary });
+        const proposal = await requestAnalysis(material, task);
+        const state = nextState("待人工核验", proposal, material);
         const outcome = state === "待人工核验" ? "待人工核验" as const : "支持当前结论" as const;
         const reason = outcome === "支持当前结论"
           ? `同一事件、事实属性与来源条件通过；建议状态：${state}。`
-          : data.proposal.rationale || "材料尚未同时满足同一事件、事实属性与权威来源条件。";
+          : proposal.rationale || "材料尚未同时满足同一事件、事实属性与权威来源条件。";
         return { id: item.id, title: item.title, outcome, reason };
-      } catch {
-        return { id: item.id, title: item.title, outcome: "未能核验" as const, reason: "请求失败；没有写入任何核验结论。" };
+      } catch (requestError) {
+        return { id: item.id, title: item.title, outcome: "未能核验" as const, reason: requestError instanceof Error ? requestError.message : "核验请求失败；没有写入任何结论。" };
       }
     }));
     const outcomeById = new Map(verified.filter((item) => item.outcome !== "未能核验").map((item) => [item.id, item.outcome]));
@@ -242,7 +273,7 @@ function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: Research
       </aside>
       <section className="center-column panel">
         <div className="timeline-header"><div><div className="panel-label">{canBuildTimeline ? "证据时间线" : "候选研究时间线"}</div><h2>事件生命周期</h2><p className="timeline-guide">左侧看状态与节点行情；中间按阶段阅读具体进展；右侧核对选中材料与运行记录。</p></div><span>{timelineGroups.length} 个阶段 · {evidence.length} 条材料</span></div>
-        <div className="timeline-toolbar"><span>勾选多个候选节点后，可一次生成独立核验结论。</span><button className="batch-review-button" disabled={batchSelection.size === 0 || batchReviewing} onClick={() => void batchVerify()}>{batchReviewing ? "正在核验…" : `批量核验${batchSelection.size ? `（${batchSelection.size}）` : ""}`}</button></div>
+        <div className="timeline-toolbar"><span>核验只检查“同一事件、事实属性、来源资格”；媒体线索会保留为候选，不消耗模型调用。</span><button className="batch-review-button" disabled={batchSelection.size === 0 || batchReviewing} onClick={() => void batchVerify()}>{batchReviewing ? "正在质检…" : `批量证据质检${batchSelection.size ? `（${batchSelection.size}）` : ""}`}</button></div>
         {batchReviewNote && <div className="batch-review-note">{batchReviewNote}</div>}
         {batchReviewResults.length > 0 && <details className="batch-review-results" open><summary>查看 {batchReviewResults.length} 条逐项核验结果</summary><div>{batchReviewResults.map((result) => <button key={result.id} className={`batch-result batch-result-${result.outcome === "支持当前结论" ? "supported" : result.outcome === "待人工核验" ? "manual" : "unavailable"}`} onClick={() => { setSelectedId(result.id); setReviewing(false); }}><span>{result.outcome}</span><b>{result.title}</b><small>{result.reason}</small></button>)}</div></details>}
         <div className="legend"><span><i className="dot official" />交易所/公司公告</span><span><i className="dot ir" />投资者关系</span><span><i className="dot user" />媒体 / 待归并</span></div>
@@ -294,6 +325,7 @@ function CandidateReviewPanel({ task, run, selected, onRunChange, onClose }: { t
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedCandidate, setSavedCandidate] = useState(false);
+  const formalSource = isFormalSource(material);
   const proposedState = proposal ? nextState("待人工核验", proposal, material) : "待人工核验";
   const canPromote = Boolean(proposal && proposedState !== "待人工核验");
   const promotionReason = !proposal ? "请先生成核验草案。"
@@ -306,10 +338,8 @@ function CandidateReviewPanel({ task, run, selected, onRunChange, onClose }: { t
   async function analyze() {
     setLoading(true); setError(null); setProposal(null);
     try {
-      const response = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...material, task }) });
-      const data = (await response.json()) as { proposal?: AgentProposal; error?: string };
-      if (!response.ok || !data.proposal) throw new Error(data.error || "无法生成核验草案");
-      setProposal(data.proposal); setSavedCandidate(false);
+      const result = await requestAnalysis(material, task);
+      setProposal(result); setSavedCandidate(false);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "材料核验失败");
     } finally { setLoading(false); }
@@ -326,21 +356,21 @@ function CandidateReviewPanel({ task, run, selected, onRunChange, onClose }: { t
   }
 
   function saveCandidateReview() {
-    if (!proposal) return;
+    if (!proposal && formalSource) return;
     const reviewed: EvidenceItem = {
       ...selected,
-      contentKind: proposal.contentKind,
-      quote: proposal.quote || selected.quote,
-      summary: proposal.claim || selected.summary,
-      impact: proposal.rationale || selected.impact,
+      contentKind: proposal?.contentKind ?? selected.contentKind,
+      quote: proposal?.quote || selected.quote,
+      summary: proposal?.claim || selected.summary,
+      impact: proposal?.rationale || selected.impact,
       reviewOutcome: "待人工核验",
     };
     const evidence = (run.evidence ?? []).map((item) => item.id === selected.id ? reviewed : item);
-    onRunChange({ ...run, proposal, stopReason: "已保存单条核验结果；该材料仍未满足正式证据的升格条件。", evidence, timelineGroups: buildTimelineGroups(evidence) });
+    onRunChange({ ...run, proposal: proposal ?? run.proposal, stopReason: formalSource ? "已保存单条证据质检结果；该材料仍未满足正式证据的升格条件。" : "已保留媒体线索为候选材料；它不会改变正式事件状态。", evidence, timelineGroups: buildTimelineGroups(evidence) });
     setSavedCandidate(true);
   }
 
-  return <article className="panel review-card"><div className="panel-heading"><span>核验候选材料</span><button className="text-button" onClick={onClose}>关闭</button></div><p className="form-note">候选时间线始终可见；只有核验通过的材料才能改变正式事件状态。</p><div className="review-form"><label>标题<input value={material.title} onChange={(event) => setMaterial({ ...material, title: event.target.value })} /></label><label>发布者<input value={material.publisher} onChange={(event) => setMaterial({ ...material, publisher: event.target.value })} /></label><label>披露日期<input type="date" value={material.disclosedAt} onChange={(event) => setMaterial({ ...material, disclosedAt: event.target.value })} /></label><label>权威原文 URL<input value={material.sourceUrl} onChange={(event) => setMaterial({ ...material, sourceUrl: event.target.value })} placeholder="https://" /></label><label>原文正文 / 关键段落<textarea rows={5} value={material.body} onChange={(event) => setMaterial({ ...material, body: event.target.value })} /></label></div>{error && <div className="error-box">{error}</div>}<button className="primary-button" onClick={() => void analyze()} disabled={loading}>{loading ? "Agent 正在核验…" : "生成核验草案"}</button>{proposal && <div className="review-proposal"><div className="proposal-metrics"><span>事件匹配：<b>{proposal.eventMatch}</b></span><span>材料属性：<b>{proposal.contentKind}</b></span><span>置信：<b>{proposal.confidence}</b></span></div><p><b>拟议结论（模型草案）：</b>{proposal.suggestedConclusion}</p><blockquote>“{proposal.quote}”</blockquote><p className="form-note">{proposal.rationale}</p>{canPromote ? <button className="confirm-button" onClick={confirm}>确认并升格为正式证据</button> : <><div className="promotion-blocker"><b>暂不能升格</b><span>{promotionReason}</span></div><button className="confirm-button candidate-save" onClick={saveCandidateReview}>{savedCandidate ? "已保存为已核验候选" : "保存为已核验候选"}</button></>}</div>}</article>;
+  return <article className="panel review-card"><div className="panel-heading"><span>检查候选材料</span><button className="text-button" onClick={onClose}>关闭</button></div><p className="form-note">证据质检不是判断文章真假：它只检查材料是否属于同一事件、是否为事实，以及来源是否足以改变正式事件状态。</p><div className="review-form"><label>标题<input value={material.title} onChange={(event) => setMaterial({ ...material, title: event.target.value })} /></label><label>发布者<input value={material.publisher} onChange={(event) => setMaterial({ ...material, publisher: event.target.value })} /></label><label>披露日期<input type="date" value={material.disclosedAt} onChange={(event) => setMaterial({ ...material, disclosedAt: event.target.value })} /></label><label>权威原文 URL<input value={material.sourceUrl} onChange={(event) => setMaterial({ ...material, sourceUrl: event.target.value })} placeholder="https://" /></label><label>原文正文 / 关键段落<textarea rows={5} value={material.body} onChange={(event) => setMaterial({ ...material, body: event.target.value })} /></label></div>{!formalSource && <div className="promotion-blocker"><b>当前是媒体/线索来源</b><span>可保留为候选以便追溯，但不能升格为正式证据；请补充交易所或公司投资者关系原文。此操作不会调用模型。</span></div>}{error && <div className="error-box">{error}</div>}{formalSource ? <button className="primary-button" onClick={() => void analyze()} disabled={loading}>{loading ? "Agent 正在生成草案…" : "生成证据质检草案"}</button> : <button className="confirm-button candidate-save" onClick={saveCandidateReview}>{savedCandidate ? "已保留为候选线索" : "保留为候选线索"}</button>}{proposal && <div className="review-proposal"><div className="proposal-metrics"><span>事件匹配：<b>{proposal.eventMatch}</b></span><span>材料属性：<b>{proposal.contentKind}</b></span><span>置信：<b>{proposal.confidence}</b></span></div><p><b>拟议结论（模型草案）：</b>{proposal.suggestedConclusion}</p><blockquote>“{proposal.quote}”</blockquote><p className="form-note">{proposal.rationale}</p>{canPromote ? <button className="confirm-button" onClick={confirm}>确认并升格为正式证据</button> : <><div className="promotion-blocker"><b>暂不能升格</b><span>{promotionReason}</span></div><button className="confirm-button candidate-save" onClick={saveCandidateReview}>{savedCandidate ? "已保存为已质检候选" : "保存为已质检候选"}</button></>}</div>}</article>;
 }
 
 function CandidateResearchInbox({ task, run, onRerun, onRunChange }: { task: ResearchTask; run: AgentRun; onRerun: () => void; onRunChange: (run: AgentRun) => void }) {

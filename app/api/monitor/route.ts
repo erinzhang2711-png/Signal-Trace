@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { AGENT_TOOL_NAMES, isRelevantEventEvidence, runIFindTool } from "@/lib/ifind";
 import { sourceTierFromPublisher } from "@/lib/evidence";
+import { researchTaskWarning } from "@/lib/task-validation";
 import { getLLMRuntime, type LLMRuntime } from "@/lib/llm";
 import { buildTimelineGroups, canonicalEventName } from "@/lib/timeline";
 import type { AgentProposal, AgentRun, AgentToolName, EvidenceItem, MarketSeries, ResearchTask, TimelineGroup } from "@/lib/types";
@@ -135,6 +136,8 @@ function isSafeUrl(value: unknown): value is string {
 export async function POST(request: Request) {
   const payload = inputSchema.safeParse(await request.json());
   if (!payload.success) return NextResponse.json({ error: "监测参数不完整，未发起外部查询。" }, { status: 400 });
+  const taskWarning = researchTaskWarning(payload.data.task);
+  if (taskWarning) return NextResponse.json({ error: taskWarning }, { status: 422 });
   const runtime = getLLMRuntime();
   if (!runtime) return NextResponse.json({ error: "未配置可用的模型服务，无法执行 Agent 工具规划。" }, { status: 503 });
 

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { evidenceFromImport, nextState } from "@/lib/evidence";
+import { researchTaskWarning } from "@/lib/task-validation";
 import { EVENT_META, marketReactionFor, SEED_EVIDENCE, SEED_VERSIONS } from "@/lib/seed-data";
 import type { AgentProposal, AgentRun, EvidenceItem, EventState, EventVersion, ImportedMaterial, MarketReaction, ResearchTask } from "@/lib/types";
 import { readWatchlist, WATCHLIST_STORAGE_KEY, type FollowedEvent } from "@/lib/watchlist";
@@ -130,6 +131,10 @@ export default function Home() {
       setError("请填写公司/标的与事件关键词，再启动 Agent。");
       return;
     }
+    const taskWarning = researchTaskWarning(task);
+    if (taskWarning) {
+      return;
+    }
     const taskText = `${task.companyQuery} ${task.eventQuery}`;
     if (taskText.includes("海光信息") && taskText.includes("中科曙光")) {
       setTask(DEMO_TASK);
@@ -216,6 +221,7 @@ export default function Home() {
             <label>公司 / 标的<input value={task.companyQuery} onChange={(event) => setTask({ ...task, companyQuery: event.target.value })} placeholder="例如：宁德时代 300750、特斯拉" /></label>
             <label>事件关键词<input value={task.eventQuery} onChange={(event) => setTask({ ...task, eventQuery: event.target.value })} placeholder="例如：收购 ××公司、定增、并购重组、业绩预告" /></label>
             <label>历史截点<input type="date" value={task.cutoffDate} onChange={(event) => setTask({ ...task, cutoffDate: event.target.value })} /></label>
+            {researchTaskWarning(task) && <div className="error-box">{researchTaskWarning(task)}</div>}
             {error && <div className="error-box">{error}</div>}
             <button className="primary-button research-button" onClick={startResearch} disabled={monitoring}>{monitoring ? "Agent 正在检索证据…" : "让 Agent 开始研究 →"}</button>
           </div>
