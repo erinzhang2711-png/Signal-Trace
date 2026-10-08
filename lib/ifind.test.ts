@@ -146,6 +146,22 @@ describe("MCP candidate evidence extraction", () => {
     expect(evidence).toHaveLength(0);
   });
 
+  it("rejects a generic debt prospectus that only mentions a merger in its background", () => {
+    const output = JSON.stringify({ data: [{
+      title: "国泰海通证券股份有限公司2026年面向专业投资者公开发行公司债券募集说明书",
+      summary: "国泰君安证券股份有限公司吸收合并海通证券股份有限公司并发行股份募集配套资金，2025年完成换股。",
+      date: "2026-06-25",
+      url: "https://example.com/bond-prospectus",
+      publisher: "iFinD 公告检索结果",
+    }] });
+    const evidence = extractMcpEvidence(output, "search_event_notices", {
+      companyQuery: "国泰君安、海通证券",
+      eventQuery: "合并",
+      cutoffDate: "2026-10-08",
+    }, "2026-10-08T00:00:00.000Z");
+    expect(evidence).toHaveLength(0);
+  });
+
   it("extracts a dated close-price series only when the MCP returns real daily fields", () => {
     const output = JSON.stringify({ data: [
       { 日期: "2026-09-01", 收盘价: "312.40", 涨跌幅: "1.20", 证券简称: "宁德时代", 证券代码: "300750.SZ" },

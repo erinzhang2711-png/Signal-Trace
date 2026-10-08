@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { z } from "zod";
 
-import { AGENT_TOOL_NAMES, runIFindTool } from "@/lib/ifind";
+import { AGENT_TOOL_NAMES, isRelevantEventEvidence, runIFindTool } from "@/lib/ifind";
 import { sourceTierFromPublisher } from "@/lib/evidence";
 import { getLLMRuntime, type LLMRuntime } from "@/lib/llm";
 import { buildTimelineGroups, canonicalEventName } from "@/lib/timeline";
@@ -227,7 +227,9 @@ export async function POST(request: Request) {
       result = JSON.parse(output) as Record<string, unknown>;
     }
 
-    const modelEvidence = evidenceFrom(payload.data.task, result);
+    // The model can summarize or enrich returned evidence, but it cannot bypass
+    // the deterministic transaction-relevance gate used for raw MCP records.
+    const modelEvidence = evidenceFrom(payload.data.task, result).filter((item) => isRelevantEventEvidence(payload.data.task, `${item.title}\n${item.summary}\n${item.quote}`, item.title));
     const extractedEvidence = mergeEvidence(modelEvidence, mcpEvidence);
     const hasFormalEvidence = modelEvidence.some((item) => Boolean(item.sourceUrl && item.quote && (item.sourceTier === "交易所/公司公告" || item.sourceTier === "公司投资者关系")));
     const proposal = modelEvidence.length === 0 ? {
@@ -298,7 +300,16 @@ function mergeEvidence(modelEvidence: EvidenceItem[], mcpEvidence: EvidenceItem[
     const key = `${item.title.trim()}|${item.disclosedAt}|${item.sourceUrl}`;
     merged.set(key, item);
   }
-  return [...merged.values()].sort((left, right) => left.disclosedAt.localeCompare(right.disclosedAt)).slice(0, 30);
+  const priority = (item: EvidenceItem) => {
+    const text = `${item.title} ${item.summary} ${item.quote}`;
+    let score = Number(Boolean(item.sourceUrl)) + (item.sourceTier === "交易所/公司公告" ? 5 : item.sourceTier === "公司投资者关系" ? 3 : 0);
+    if (/换股|吸收合并|重大资产重组/.test(text)) score += 7;
+    if (/预案|审议|审核|核准|批准|交割|实施完成|终止上市/.test(text)) score += 4;
+    if (/更名|证券简称|管理层|总裁|董事长|整合/.test(text)) score += 2;
+    if (/债券|募集说明书|注册稿|年度报告|季度报告/.test(item.title) && !/换股|吸收合并|合并|重组/.test(item.title)) score -= 12;
+    return score;
+  };
+  return [...merged.values()].sort((left, right) => priority(right) - priority(left) || left.disclosedAt.localeCompare(right.disclosedAt)).slice(0, 18).sort((left, right) => left.disclosedAt.localeCompare(right.disclosedAt));
 }
 
 type TimelineNarrative = { eventName: string; groups: TimelineGroup[] };

@@ -15,18 +15,28 @@ function primaryCompanyName(task: ResearchTask) {
   return (task.companyQuery.split(/[、，,]/)[0] ?? task.companyQuery).replace(/\b\d{6}\b/g, "").trim();
 }
 
+function lifecycleQuery(task: ResearchTask) {
+  const merger = /换股|吸收合并|合并|重组/.test(task.eventQuery);
+  if (!merger) return `${task.companyQuery} ${task.eventQuery}`.trim();
+  // A generic “合并” query is too broad for old transactions: retrieval tends to
+  // return recent financing or personnel pieces that merely mention the deal.
+  // Add only lifecycle terms that identify the same transaction, not a date window.
+  const successor = /国泰君安/.test(task.companyQuery) && /海通证券/.test(task.companyQuery) ? "国泰海通" : "";
+  return `${task.companyQuery} ${successor} 换股吸收合并 重大资产重组 预案 审核 批准 实施 更名`.trim();
+}
+
 function toolCallsFor(task: ResearchTask): Record<AgentToolName, McpCall> {
   const start = historyStart(task.cutoffDate);
-  const query = `${task.companyQuery} ${task.eventQuery}`.trim();
+  const query = lifecycleQuery(task);
   return {
   search_event_notices: {
     target: "news",
     tool: "search_notice",
     arguments: {
-      query: `${query} 筹划 预案 审议 审核 实施 完成 整合 公告`,
+      query: `${query} 筹划 审议 交割 完成 整合 公告`,
       time_start: start,
       time_end: task.cutoffDate,
-      size: 10,
+      size: 20,
     },
   },
   search_related_news: {
@@ -36,7 +46,7 @@ function toolCallsFor(task: ResearchTask): Record<AgentToolName, McpCall> {
       query: `${query} 时间线 进展`,
       time_start: start,
       time_end: task.cutoffDate,
-      size: 10,
+      size: 20,
     },
   },
   get_disclosed_event_context: {
@@ -169,15 +179,21 @@ function companyTerms(task: ResearchTask) {
   return [...new Set(task.companyQuery.match(/[\u4e00-\u9fa5]{2,}|\d{6}|[A-Za-z]{2,}/g) ?? [])];
 }
 
-function isRelevant(task: ResearchTask, text: string, title = "") {
+export function isRelevantEventEvidence(task: ResearchTask, text: string, title = "") {
   const companies = companyTerms(task);
   const events = relevanceTerms(task);
-  const broadlyRelevant = companies.some((term) => text.includes(term)) && (events.length === 0 || events.some((term) => text.includes(term)));
+  const merger = /换股|吸收合并|合并|重组/.test(task.eventQuery);
+  const successor = /国泰君安/.test(task.companyQuery) && /海通证券/.test(task.companyQuery) ? "国泰海通" : "";
+  const bothPartiesMatch = merger && companies.length >= 2 && companies.every((term) => text.includes(term));
+  const successorMatch = Boolean(successor && text.includes(successor));
+  const broadlyRelevant = merger
+    ? bothPartiesMatch || successorMatch
+    : companies.some((term) => text.includes(term)) && (events.length === 0 || events.some((term) => text.includes(term)));
   if (!broadlyRelevant) return false;
   // For a merger, a generic financing or periodic filing can repeat the merger in
   // its background section without being a lifecycle milestone. Keep only records
   // whose headline itself signals the transaction or a direct post-merger outcome.
-  if (/换股|吸收合并|合并|重组/.test(task.eventQuery)) {
+  if (merger) {
     const hasLifecycleHeadline = /换股|吸收合并|合并|重组|整合|更名|新任|管理层|总裁|董事长|交割|审核|审议|预案|停牌/.test(title);
     if (!hasLifecycleHeadline) return false;
     if (/债券|募集说明书|注册稿|年度报告|季度报告/.test(title) && !/换股|吸收合并|合并|重组/.test(title)) return false;
@@ -193,13 +209,13 @@ function toolLabel(tool: AgentToolName) {
 }
 
 function fallbackEvidenceFromText(output: string, tool: AgentToolName, task: ResearchTask, capturedAt: string): EvidenceItem[] {
-  if (!isRelevant(task, output)) return [];
+  if (!isRelevantEventEvidence(task, output)) return [];
   const seenDates = new Set<string>();
   const datePattern = /20\d{2}(?:[-/.]\d{1,2}[-/.]\d{1,2}|年\d{1,2}月\d{1,2}日)/g;
   return Array.from(output.matchAll(datePattern)).flatMap((match, index) => {
     const disclosedAt = normalizeDate(match[0]);
     const excerpt = output.slice(Math.max(0, (match.index ?? 0) - 180), (match.index ?? 0) + 300).replace(/\s+/g, " ").trim();
-    if (!disclosedAt || disclosedAt > task.cutoffDate || seenDates.has(disclosedAt) || !isRelevant(task, excerpt)) return [];
+    if (!disclosedAt || disclosedAt > task.cutoffDate || seenDates.has(disclosedAt) || !isRelevantEventEvidence(task, excerpt)) return [];
     seenDates.add(disclosedAt);
     return [{
       id: `mcp-raw-${capturedAt}-${index}`,
@@ -228,7 +244,7 @@ export function extractMcpEvidence(output: string, tool: AgentToolName, task: Re
     const disclosedAt = normalizeDate(recordValue(record, DATE_KEYS));
     const body = recordValue(record, BODY_KEYS);
     const combined = `${title}\n${body}`;
-    if (!title || !disclosedAt || disclosedAt > task.cutoffDate || !isRelevant(task, combined, title)) return [];
+    if (!title || !disclosedAt || disclosedAt > task.cutoffDate || !isRelevantEventEvidence(task, combined, title)) return [];
 
     const candidateUrl = recordValue(record, URL_KEYS);
     const sourceUrl = isHttpsUrl(candidateUrl) ? candidateUrl : "";
