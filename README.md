@@ -104,7 +104,7 @@ npm run dev
 | `IFIND_MCP_TOKEN` | 是（iFinD 监测） | 仅由服务端 MCP 客户端使用 |
 | `IFIND_NEWS_MCP_URL` | 是（iFinD 监测） | 新闻公告 MCP 的 Streamable HTTP 地址 |
 | `IFIND_STOCK_MCP_URL` | 是（iFinD 监测） | A股数据 MCP 的 Streamable HTTP 地址 |
-| `EXA_API_KEY` | 否（权威原文补链） | 仅供服务端使用；后续用于在交易所、巨潮资讯和公司 IR 域名中发现原文链接，不能作为证据来源本身 |
+| `EXA_API_KEY` | 否（权威原文补链） | 仅供服务端使用；用于在交易所、巨潮资讯和公司 IR 域名中发现原文链接，不能作为证据来源本身 |
 
 ## 测试与部署
 

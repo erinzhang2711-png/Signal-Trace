@@ -3,6 +3,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { z } from "zod";
 
 import { AGENT_TOOL_NAMES, isRelevantEventEvidence, runIFindTool } from "@/lib/ifind";
+import { resolveAuthoritySources } from "@/lib/authority-resolver";
 import { sourceTierFromPublisher } from "@/lib/evidence";
 import { researchTaskWarning } from "@/lib/task-validation";
 import { getLLMRuntime, type LLMRuntime } from "@/lib/llm";
@@ -234,7 +235,10 @@ export async function POST(request: Request) {
     // the deterministic transaction-relevance gate used for raw MCP records.
     const modelEvidence = evidenceFrom(payload.data.task, result).filter((item) => isRelevantEventEvidence(payload.data.task, `${item.title}\n${item.summary}\n${item.quote}`, item.title));
     const extractedEvidence = mergeEvidence(modelEvidence, mcpEvidence);
-    const hasFormalEvidence = modelEvidence.some((item) => Boolean(item.sourceUrl && item.quote && (item.sourceTier === "交易所/公司公告" || item.sourceTier === "公司投资者关系")));
+    const authorityResolution = await resolveAuthoritySources(payload.data.task, extractedEvidence);
+    traces.push(authorityResolution.trace);
+    const resolvedEvidence = authorityResolution.evidence;
+    const hasFormalEvidence = resolvedEvidence.some((item) => Boolean(item.sourceUrl && item.quote && (item.sourceTier === "交易所/公司公告" || item.sourceTier === "公司投资者关系")));
     const proposal = modelEvidence.length === 0 ? {
       ...proposalFrom(result),
       proposedState: "待人工核验" as const,
@@ -253,9 +257,9 @@ export async function POST(request: Request) {
     };
     const decision = result.decision as string;
     const status: AgentRun["status"] = modelEvidence.length === 0 || decision === "待人工核验" || proposal.requiresReview ? "待人工核验" : decision === "无状态变化" ? "无状态变化" : "待用户确认";
-    const defaultGroups = buildTimelineGroups(extractedEvidence);
-    const narrative = await summarizeTimelineWithLLM(runtime, payload.data.task, extractedEvidence, defaultGroups);
-    const run: AgentRun = { id: `run-${Date.now()}`, status, startedAt, endedAt: new Date().toISOString(), stopReason: extractedEvidence.length === 0 ? "未提取到可构建同一事件时间线的证据节点。" : modelEvidence.length === 0 ? "已展示代码提取的候选时间线；等待 Agent 归并与人工核验。" : (result.stopReason as string) || "已完成有限工具调用。", toolCalls: traces, proposal, evidence: extractedEvidence, marketSeries, eventName: narrative?.eventName || canonicalEventName(payload.data.task, extractedEvidence), timelineGroups: narrative?.groups || defaultGroups };
+    const defaultGroups = buildTimelineGroups(resolvedEvidence);
+    const narrative = await summarizeTimelineWithLLM(runtime, payload.data.task, resolvedEvidence, defaultGroups);
+    const run: AgentRun = { id: `run-${Date.now()}`, status, startedAt, endedAt: new Date().toISOString(), stopReason: resolvedEvidence.length === 0 ? "未提取到可构建同一事件时间线的证据节点。" : modelEvidence.length === 0 ? "已展示代码提取的候选时间线；等待 Agent 归并与人工核验。" : (result.stopReason as string) || "已完成有限工具调用。", toolCalls: traces, proposal, evidence: resolvedEvidence, marketSeries, eventName: narrative?.eventName || canonicalEventName(payload.data.task, resolvedEvidence), timelineGroups: narrative?.groups || defaultGroups };
     return NextResponse.json({ run });
   } catch (error) {
     const run = failedRun(startedAt, traces, monitorFailureReason(runtime, traces.length, error));
