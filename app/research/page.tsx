@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
-import { evidenceFromImport, nextState } from "@/lib/evidence";
+import { evidenceFromImport, nextState, sourceTierFromPublisher } from "@/lib/evidence";
 import { marketReactionForEvent, returnFrom } from "@/lib/market";
 import { buildTimelineGroups, canonicalEventName, timelineStageLabel } from "@/lib/timeline";
 import { followedEventId, readWatchlist, WATCHLIST_STORAGE_KEY, type FollowedEvent } from "@/lib/watchlist";
@@ -292,6 +292,15 @@ function CandidateReviewPanel({ task, run, selected, onRunChange, onClose }: { t
   const [proposal, setProposal] = useState<AgentProposal | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [savedCandidate, setSavedCandidate] = useState(false);
+  const proposedState = proposal ? nextState("待人工核验", proposal, material) : "待人工核验";
+  const canPromote = Boolean(proposal && proposedState !== "待人工核验");
+  const promotionReason = !proposal ? "请先生成核验草案。"
+    : proposal.eventMatch !== "同一事件" ? "模型未能确认它属于当前事件。"
+      : proposal.contentKind !== "事实" ? `模型将材料识别为“${proposal.contentKind}”，而非可升格的事实材料。`
+        : proposal.requiresReview ? "模型要求人工复核，不能直接升格。"
+          : !["交易所/公司公告", "公司投资者关系"].includes(sourceTierFromPublisher(material.publisher, material.sourceUrl)) ? "来源不是交易所/公司公告或公司投资者关系页面。"
+            : "材料缺少可用短引或关键事实字段。";
 
   async function analyze() {
     setLoading(true); setError(null); setProposal(null);
@@ -299,7 +308,7 @@ function CandidateReviewPanel({ task, run, selected, onRunChange, onClose }: { t
       const response = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...material, task }) });
       const data = (await response.json()) as { proposal?: AgentProposal; error?: string };
       if (!response.ok || !data.proposal) throw new Error(data.error || "无法生成核验草案");
-      setProposal(data.proposal);
+      setProposal(data.proposal); setSavedCandidate(false);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "材料核验失败");
     } finally { setLoading(false); }
@@ -315,7 +324,22 @@ function CandidateReviewPanel({ task, run, selected, onRunChange, onClose }: { t
     onClose();
   }
 
-  return <article className="panel review-card"><div className="panel-heading"><span>核验候选材料</span><button className="text-button" onClick={onClose}>关闭</button></div><p className="form-note">候选时间线始终可见；只有核验通过的材料才能改变正式事件状态。</p><div className="review-form"><label>标题<input value={material.title} onChange={(event) => setMaterial({ ...material, title: event.target.value })} /></label><label>发布者<input value={material.publisher} onChange={(event) => setMaterial({ ...material, publisher: event.target.value })} /></label><label>披露日期<input type="date" value={material.disclosedAt} onChange={(event) => setMaterial({ ...material, disclosedAt: event.target.value })} /></label><label>权威原文 URL<input value={material.sourceUrl} onChange={(event) => setMaterial({ ...material, sourceUrl: event.target.value })} placeholder="https://" /></label><label>原文正文 / 关键段落<textarea rows={5} value={material.body} onChange={(event) => setMaterial({ ...material, body: event.target.value })} /></label></div>{error && <div className="error-box">{error}</div>}<button className="primary-button" onClick={() => void analyze()} disabled={loading}>{loading ? "Agent 正在核验…" : "生成核验草案"}</button>{proposal && <div className="review-proposal"><p><b>拟议结论：</b>{proposal.suggestedConclusion}</p><blockquote>“{proposal.quote}”</blockquote><button className="confirm-button" onClick={confirm}>确认并升格为正式证据</button></div>}</article>;
+  function saveCandidateReview() {
+    if (!proposal) return;
+    const reviewed: EvidenceItem = {
+      ...selected,
+      contentKind: proposal.contentKind,
+      quote: proposal.quote || selected.quote,
+      summary: proposal.claim || selected.summary,
+      impact: proposal.rationale || selected.impact,
+      reviewOutcome: "待人工核验",
+    };
+    const evidence = (run.evidence ?? []).map((item) => item.id === selected.id ? reviewed : item);
+    onRunChange({ ...run, proposal, stopReason: "已保存单条核验结果；该材料仍未满足正式证据的升格条件。", evidence, timelineGroups: buildTimelineGroups(evidence) });
+    setSavedCandidate(true);
+  }
+
+  return <article className="panel review-card"><div className="panel-heading"><span>核验候选材料</span><button className="text-button" onClick={onClose}>关闭</button></div><p className="form-note">候选时间线始终可见；只有核验通过的材料才能改变正式事件状态。</p><div className="review-form"><label>标题<input value={material.title} onChange={(event) => setMaterial({ ...material, title: event.target.value })} /></label><label>发布者<input value={material.publisher} onChange={(event) => setMaterial({ ...material, publisher: event.target.value })} /></label><label>披露日期<input type="date" value={material.disclosedAt} onChange={(event) => setMaterial({ ...material, disclosedAt: event.target.value })} /></label><label>权威原文 URL<input value={material.sourceUrl} onChange={(event) => setMaterial({ ...material, sourceUrl: event.target.value })} placeholder="https://" /></label><label>原文正文 / 关键段落<textarea rows={5} value={material.body} onChange={(event) => setMaterial({ ...material, body: event.target.value })} /></label></div>{error && <div className="error-box">{error}</div>}<button className="primary-button" onClick={() => void analyze()} disabled={loading}>{loading ? "Agent 正在核验…" : "生成核验草案"}</button>{proposal && <div className="review-proposal"><div className="proposal-metrics"><span>事件匹配：<b>{proposal.eventMatch}</b></span><span>材料属性：<b>{proposal.contentKind}</b></span><span>置信：<b>{proposal.confidence}</b></span></div><p><b>拟议结论（模型草案）：</b>{proposal.suggestedConclusion}</p><blockquote>“{proposal.quote}”</blockquote><p className="form-note">{proposal.rationale}</p>{canPromote ? <button className="confirm-button" onClick={confirm}>确认并升格为正式证据</button> : <><div className="promotion-blocker"><b>暂不能升格</b><span>{promotionReason}</span></div><button className="confirm-button candidate-save" onClick={saveCandidateReview}>{savedCandidate ? "已保存为已核验候选" : "保存为已核验候选"}</button></>}</div>}</article>;
 }
 
 function CandidateResearchInbox({ task, run, onRerun, onRunChange }: { task: ResearchTask; run: AgentRun; onRerun: () => void; onRunChange: (run: AgentRun) => void }) {
