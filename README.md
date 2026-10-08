@@ -1,126 +1,93 @@
 # SignalTrace「证见」
 
-## 演示场景
+一个面向投资事件研究的证据时间线原型。它把公告、新闻和市场背景整理为**可追溯的候选材料**，优先寻找交易所、巨潮资讯或公司 IR 原文；只有来源、时间和事件匹配的材料，才能进入正式证据时间线。
 
-默认首页从一条研究任务开始：输入公司/标的、事件关键词与历史截点，Agent 再调用 iFinD MCP 进行有限检索。所有任务（包括海光信息与中科曙光）都走同一条研究流程，不会跳转到内置案例页面。
+> 产品只做信息证据治理与研究过程记录，不提供买卖建议、收益承诺或价格预测。
 
-核心闭环：定义研究任务 → Single Agent 选择受限 iFinD 工具 → 候选材料收件箱 → 用户补充权威原文 → 生成更新草案 → 规则校验 → 用户确认 → 新版本、时间线与站内通知。
-
-## Agent 与 MCP 如何协作
-
-这不是 Multi-agent 系统，而是一个**受约束的 Single Agent**：模型仅负责决定在给定的四个只读业务工具中查询哪些资料，以及基于返回结果提出草案。用户任务会被传给工具调用层生成查询参数；每次运行至多 4 次调用，重复工具会被拒绝。
-
-| 业务工具 | 底层 iFinD MCP 工具 | 用途 |
-| --- | --- | --- |
-| `search_event_notices` | `search_notice` | 优先核验公告与程序状态 |
-| `search_related_news` | `search_news` | 补充新闻传播与不同观点 |
-| `get_disclosed_event_context` | `get_stock_events` | 核对两家公司的公开披露事件 |
-| `get_historical_market_context` | `get_stock_performance` | 展示固定窗口的同期市场背景，不判断因果 |
-
-服务端执行 MCP 调用，浏览器不接触任何凭证。模型不能自行决定来源权重、修改状态或写入版本；公告优先、缺少原始链接、冲突、工具失败和调用上限均由产品规则处理。候选材料若缺少原文，只能停留在收件箱；用户补充可直达来源后，才可点击确认并建立正式事件或写入本地版本。
-
-停止条件：无新事实则输出“无状态变化”；来源不足/冲突则转“待人工核验”；工具失败或未调用证据工具则失败退出；达到 4 次调用后停止继续检索。
-
-### 面试讲法：LangChain 语义映射（不新增框架依赖）
-
-运行逻辑保持现状，但可以用 LangChain 的语言清楚解释这套受控架构：
+## 核心流程
 
 ```text
-ResearchTask
-  → Planner（模型选择下一只未用工具）
-  → Tool executor（服务端 iFinD MCP）
-  → Evidence normalizer（统一日期、短引、来源与链接）
-  → Evidence gate（同一事件 / 事实属性 / 来源资格）
-  → Candidate timeline（阶段归并草案）
-  → Human approval（补原文、确认后才写正式版本）
+研究任务
+  → Single Agent 规划 iFinD 检索
+  → iFinD MCP 返回公告 / 新闻 / 事件 / 行情候选
+  → 规则过滤与同一事件归并
+  → Exa 查找并读取权威原文
+  → 正式证据时间线 或 候选人工核验
 ```
 
-| LangChain 概念 | SignalTrace 对应实现 | 为什么这样设计 |
+1. 用户输入公司、事件关键词与历史截点；所有任务走同一条研究路径。
+2. 受限 Single Agent 最多调用 4 个只读 iFinD MCP 工具，同一工具不可重复调用。
+3. 服务端统一候选材料的日期、短引、来源与链接，并过滤不相关材料。
+4. 对缺少权威链接的候选，Exa 优先在上交所、深交所、巨潮资讯中检索；未命中时才尝试公司 IR 页面。
+5. 只有官方域名、标题、披露日期和可读原文正文同时匹配的材料，才自动标记为“已自动核验”并写入证据时间线。
+6. 媒体转载、无直达原文或原文无法匹配的材料只保留为候选，供用户补充或人工核验。
+
+详细模块边界见 [架构说明](docs/ARCHITECTURE.md)，测试和验证范围见 [测试说明](docs/TESTING.md)。
+
+## 架构与职责
+
+| 层 | 文件 | 职责 |
 | --- | --- | --- |
-| Agent / Planner | `app/api/monitor/route.ts` 的受限工具规划 | 只决定检索顺序，不能改状态或来源等级 |
-| Tools | 四个 iFinD MCP 业务工具 | 只读、最多 4 次、同一工具不可重复 |
-| State | `AgentRun`、`EvidenceItem`、`TimelineGroup` | 每一步可回放，候选和正式版本分开 |
-| Guardrails | `lib/evidence.ts` 的规则校验 | 缺原文、媒体线索或冲突不能升级 |
-| Human-in-the-loop | 候选核验面板与确认按钮 | 人补原文并确认，才创建正式事件版本 |
+| 页面与交互 | `app/page.tsx`、`app/research/page.tsx` | 收集研究任务、展示时间线、来源链接与降级状态 |
+| 编排入口 | `app/api/monitor/route.ts` | 受控 Agent 循环、调用上限、汇总运行记录 |
+| iFinD 适配 | `lib/ifind.ts` | MCP 调用、候选提取、行情解析与任务相关性过滤 |
+| 权威原文补链 | `lib/authority-resolver.ts` | Exa 检索、官方来源判定、标题/日期/正文核对 |
+| 证据治理 | `lib/evidence.ts` | 来源分级、正式状态升级规则、候选隔离 |
+| 时间线 | `lib/timeline.ts` | 阶段归并与来源可追溯展示 |
+| 类型与测试 | `lib/types.ts`、`lib/*.test.ts` | 共享数据契约与规则回归测试 |
 
-面试时可以说：**“我采用 LangChain 风格的 Planner–Tools–State–Human approval 分层，但没有为了包装而引入 LangChain 依赖。这样保留了工具轨迹和人工确认的可审计性，也避免框架重写给演示带来新的故障面。”**
+## 证据规则
 
-## Agent 状态机与决策边界
+| 材料类型 | 是否自动进入正式证据时间线 | 后续动作 |
+| --- | --- | --- |
+| 交易所 / 巨潮 / 深交所原文，且标题、日期、正文匹配 | 是 | 标记“已自动核验” |
+| 公司 IR 原文，且标题、日期、正文匹配 | 是 | 标记“已自动核验” |
+| iFinD 返回但没有原文链接 | 否 | Exa 自动补链；失败则保留候选 |
+| 媒体、研报观点、传闻 | 否 | 仅作线索，需人工补权威原文 |
+| 冲突、非同一事件、非事实材料 | 否 | 不改写当前事件状态 |
 
-这是一个受约束的单 Agent 循环：模型只能从四个业务工具中选择下一步，服务端才真正执行 MCP 调用并回传结果。模型不可读取凭证、不可写入版本、不可自行提高来源等级。
-
-```text
-研究任务 → 选择一个未调用的工具 → 服务端执行并记录轨迹 → 模型决定继续或输出草案
-                                      ↑                         │
-                                      └──── 最多 4 次，禁止重复 ──┘
-
-草案 → 规则层裁决 → 待人工核验 / 无状态变化 / 待用户确认 → 用户确认 → 正式事件版本
-```
-
-模型需要判断：材料是否属于同一事件、属于事实/观点/推测/传闻、是否存在足以改变状态的新事实、是否冲突、以及是否要求人工复核。规则层会额外强制以下条件：
-
-- 没有可直达 HTTPS 原文、不是“同一事件”、不是事实材料、或 `requiresReview=true`：一律停留在待人工核验；
-- 媒体报道只能提供候选线索，不能独立建立正式事件；
-- “已完成”与“已否认”只能由交易所/公司公告支持；
-- 没有执行任何证据工具、工具调用失败、或达到调用上限后仍无可靠结论：停止，不生成正式结论。
-
-## 设计原则
-
-- **证据优先**：每条结论附带发生、披露、抓取、更新时间、原文短引与来源等级。
-- **模型不裁决**：模型只做提取、归并和解释；来源等级、证据不足拦截与状态更新由规则控制。
-- **先提议、后确认**：任何新线索都不会直接写入正式结论。
-- **不静默补全**：缺来源、缺日期、缺原文摘录、AI 调用失败或行情数据缺失时，界面明确展示降级状态。
-- **版本不被传闻污染**：无来源传闻仅进入人工核验，不会创建正式版本或覆盖当前结论。
-
-## 数据来源与口径
-
-- [海光信息交易预案](https://star.sse.com.cn/disclosure/listedinfo/announcement/c/new/2025-06-10/688041_20250610_0BJR.pdf)
-- [中科曙光公司公告页](https://www.sugon.com/investor/affiche)
-- [中科曙光 2025-09-06 进展公告镜像](https://money.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?id=11435914&stockid=603019)
-
-iFinD MCP 连接提供公告、新闻、事件与日频历史行情检索；实际验证中，公告检索返回的是标题、日期与片段，不一定附原始公告 URL。因此 Agent 会保留 iFinD 工具轨迹，并将缺原始链接的草案拦截为人工核验，而不是伪造可点击来源。
+Exa 只负责发现与读取潜在原文链接，**不是证据来源本身**。系统不会伪造 URL、日期、短引或“已完成”结论。
 
 ## 本地运行
 
 ```bash
 npm install
 cp .env.local.example .env.local
-# 在 .env.local 填入 OpenAI 或智谱，以及 iFinD 凭证；不要提交该文件
 npm run dev
 ```
 
-打开 `http://localhost:3000`。未配置 Key 时，导入页面会明确提示，而不会伪造模型结果。
+打开 `http://localhost:3000`。密钥只放在 `.env.local` 或 Vercel 的服务端环境变量中，绝不提交到仓库或暴露为 `NEXT_PUBLIC_*` 变量。
 
 ## 环境变量
 
-任选一种模型提供方；两组模型变量不要同时配置。iFinD 变量仅在使用泛研究监测时需要。
+任选一种模型提供方；两组模型变量不要同时配置。
 
 | 名称 | 必需 | 用途 |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | OpenAI 路径需要 | 仅由服务端 Route Handler 使用 |
+| `OPENAI_API_KEY` | OpenAI 路径需要 | 服务端模型调用 |
 | `OPENAI_MODEL` | 否 | 默认为 `gpt-5-mini`，需支持 Structured Outputs |
-| `ZHIPU_API_KEY` | 智谱路径需要 | 智谱 API Key，仅由服务端 Route Handler 使用 |
-| `ZHIPU_MODEL` | 否 | 默认为 `glm-4-flash`；请使用账户已开通、支持 Chat Completions、工具调用与 JSON 输出的模型 |
-| `IFIND_MCP_TOKEN` | 是（iFinD 监测） | 仅由服务端 MCP 客户端使用 |
-| `IFIND_NEWS_MCP_URL` | 是（iFinD 监测） | 新闻公告 MCP 的 Streamable HTTP 地址 |
-| `IFIND_STOCK_MCP_URL` | 是（iFinD 监测） | A股数据 MCP 的 Streamable HTTP 地址 |
-| `EXA_API_KEY` | 否（权威原文补链） | 仅供服务端使用；用于在交易所、巨潮资讯和公司 IR 域名中发现原文链接，不能作为证据来源本身 |
+| `ZHIPU_API_KEY` | 智谱路径需要 | 服务端模型调用 |
+| `ZHIPU_MODEL` | 否 | 需支持 Chat Completions、工具调用与 JSON 输出 |
+| `IFIND_MCP_TOKEN` | iFinD 监测需要 | iFinD MCP 服务端鉴权 |
+| `IFIND_NEWS_MCP_URL` | iFinD 监测需要 | 新闻公告 MCP 地址 |
+| `IFIND_STOCK_MCP_URL` | iFinD 监测需要 | A 股数据 MCP 地址 |
+| `EXA_API_KEY` | 权威原文自动补链需要 | 服务端 Exa SDK；只发现、读取并核对原文 |
 
-## 测试与部署
+部署到 Vercel 时，在 **Project Settings → Environment Variables** 配置对应变量；Production、Preview 和 Development 环境按需要分别设置。
+
+## 验证命令
 
 ```bash
-npm run check
-npm run test
-npm run build
+npm run test    # 规则与适配层单元测试
+npm run check   # TypeScript 类型检查
+npm run build   # Next.js 生产构建
 ```
 
-部署到 Vercel 后，在 Project Settings → Environment Variables 配置一组 `OPENAI_*` 或 `ZHIPU_*`，以及 `IFIND_*` 变量。启用权威原文自动补链时，再配置 `EXA_API_KEY`；不要将任何 Key、token 放入客户端变量或 GitHub 仓库。
+这些命令验证的是代码路径和构建，不等于已验证真实 iFinD、Exa、模型账号和 Vercel 生产环境。完整范围、手动验收清单和未覆盖项见 [测试说明](docs/TESTING.md)。
 
-## 已知边界与未做事项
+## 已知边界
 
-- 监测的是固定历史区间，不是实时盯盘；定时触发、账号体系、云端持久化和真实推送尚未实现。
-- 导入内容在浏览器本地存储中保存，刷新后可恢复，但不跨设备同步。
-- 泛事件监测需要所选模型支持 Chat Completions、工具调用与 JSON 输出；若模型或 MCP 调用失败，应用会明确停止并提示原因，不会伪造检索结果。固定案例不依赖外部模型，仍可完整复现。
-- 仅覆盖一个固定历史事件的完整版本演化；全市场自动事件聚类、后台调度，以及“更正/过期”材料的端到端交互仍是后续能力。
-- 首版以固定历史案例呈现正式版本演化；传闻、观点与缺失原文的材料只会停留在候选核验队列，不会被伪造成正式版本。
-- 该产品仅做信息证据治理，不构成证券投资咨询或交易建议。
+- 当前是按用户触发的历史研究，不包含定时监测、账号体系、云端持久化或推送。
+- Exa 与 iFinD 的真实调用依赖各自的有效服务端凭证、额度与网络可用性；未配置或失败时系统应明确降级，而非生成虚假证据。
+- 公司 IR 域名的自动识别比交易所域名更保守；匹配不足时材料保持候选。
+- 尚未建立人工标注基准集，因此不宣称“全市场召回率”或“模型准确率”。评估设计见 [测试说明](docs/TESTING.md)。
