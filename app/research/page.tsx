@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useSearchParams } from "next/navigation";
 
 import { evidenceFromImport, nextState } from "@/lib/evidence";
+import { marketReactionForEvent, returnFrom } from "@/lib/market";
 import type { AgentProposal, AgentRun, EvidenceItem, EventState, ImportedMaterial, MarketSeries, ResearchTask } from "@/lib/types";
 
 const RESEARCH_STORAGE_PREFIX = "signaltrace-research-v1:";
@@ -151,7 +152,8 @@ function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: Research
       <aside className="left-column">
         <article className="panel conclusion-card"><div className="panel-label">当前事件状态</div><div className="state-row"><span className={`status-pill ${stateTone[state]}`}>{state}</span><span className="version">{canBuildTimeline ? "正式草案" : "候选研究"}</span></div><p>{conclusion}</p><div className="risk-callout"><strong>{canBuildTimeline ? "风险提示" : "候选时间线"}</strong><span>{canBuildTimeline ? "候选材料不等于正式结论；未直达原文或未识别交易对手时，系统不会升级事件状态。" : "下方先展示可读的候选时间线；只有带原文、短引和同一事件匹配的节点，才可升格为正式事实。"}</span></div></article>
         <article className="panel market-card"><div className="panel-heading"><span>检索覆盖</span><small>非因果验证</small></div><div className="market-grid"><div><span>工具调用</span><b>{run.toolCalls.length} 次</b></div><div><span>候选材料</span><b>{evidence.length} 条</b></div><div><span>数据口径</span><b>历史快照</b></div></div><p className="fine-print">公告、新闻、披露事件与市场背景由 MCP 查询；市场数据仅作上下文，不输出涨跌预测或买卖建议。</p></article>
-        <MarketChart series={run.marketSeries} />
+        <MarketChart series={run.marketSeries} selected={selected} />
+        <SelectedMarketReaction series={run.marketSeries} selected={selected} />
         <article className="panel version-card"><div className="panel-heading"><span>结论演化</span><small>1 个版本</small></div><ol className="versions"><li><i className={stateTone[state]} /><div><b>{state}</b><span>{task.cutoffDate}</span><p>{run.stopReason}</p></div></li></ol></article>
       </aside>
       <section className="center-column panel"><div className="timeline-header"><div><div className="panel-label">{canBuildTimeline ? "证据时间线" : "候选研究时间线"}</div><h2>{canBuildTimeline ? "同一事件，不同可信度" : "先阅读线索，再核验事实"}</h2></div><span>{evidence.length} 条{canBuildTimeline ? "证据材料" : "候选材料"}</span></div><div className="legend"><span><i className="dot official" />交易所/公司公告</span><span><i className="dot ir" />投资者关系</span><span><i className="dot user" />媒体 / 待归并</span></div><div className="timeline">{evidence.length ? evidence.map((item) => <button className={`timeline-item ${selected?.id === item.id ? "selected" : ""}`} key={item.id} onClick={() => { setSelectedId(item.id); setReviewing(false); }}><div className="date"><b>{item.disclosedAt}</b><span>{item.sourceTier}</span></div><i className={`line-dot ${item.sourceTier === "交易所/公司公告" ? "official" : item.sourceTier === "公司投资者关系" ? "ir" : "user"}`} /><div className="timeline-copy"><div><span className="kind-tag">{item.contentKind}</span>{item.statusEffect && <span className={`status-mini ${stateTone[item.statusEffect]}`}>{item.statusEffect}</span>}{!canBuildTimeline && <span className="review-mini">候选</span>}</div><h3>{item.title}</h3><p>{item.summary}</p><small>{item.publisher}</small></div></button>) : <div className="timeline-empty">本次没有提取出同时匹配公司与事件关键词的材料。请补充公司代码、交易对手或更具体的事件名称后重新运行。</div>}</div></section>
@@ -164,7 +166,7 @@ function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: Research
   </main>;
 }
 
-function MarketChart({ series }: { series?: MarketSeries }) {
+function MarketChart({ series, selected }: { series?: MarketSeries; selected?: EvidenceItem }) {
   if (!series) return <article className="panel market-chart"><div className="panel-heading"><span>历史行情</span><small>待 iFinD 返回日线</small></div><p className="fine-print">本次历史行情工具未返回可解析的“日期 + 收盘价”序列，因此不绘制图表，也不以摘要或静态数字替代真实行情。</p></article>;
   const points = series.points.slice(-60);
   const closes = points.map((point) => point.close);
@@ -175,7 +177,19 @@ function MarketChart({ series }: { series?: MarketSeries }) {
   const first = points[0];
   const last = points[points.length - 1];
   const change = ((last.close / first.close) - 1) * 100;
-  return <article className="panel market-chart"><div className="panel-heading"><span>历史行情</span><small>{points.length} 个交易日</small></div><div className="chart-metric"><b>{last.close.toFixed(2)}</b><span className={change >= 0 ? "positive-move" : "negative-move"}>{change >= 0 ? "+" : ""}{change.toFixed(2)}%</span></div><svg className="price-chart" viewBox="0 0 280 104" role="img" aria-label="iFinD 历史收盘价折线图"><line x1="0" y1="92" x2="280" y2="92" /><polyline points={coordinates} /></svg><div className="chart-axis"><span>{first.date}</span><span>{last.date}</span></div><p className="fine-print">收盘价序列，仅用于事件研究窗口观察，不构成收益预测或因果证明。</p><small className="source-reference">{series.sourceLabel} · 抓取于 {series.capturedAt.slice(0, 10)}</small></article>;
+  const reaction = marketReactionForEvent(series, selected?.disclosedAt ?? "");
+  const selectedIndex = reaction ? points.findIndex((point) => point.date === reaction.observedDate) : -1;
+  const markerX = selectedIndex >= 0 ? (selectedIndex / Math.max(points.length - 1, 1)) * 280 : undefined;
+  const markerY = selectedIndex >= 0 ? 92 - ((points[selectedIndex].close - min) / range) * 76 : undefined;
+  return <article className="panel market-chart"><div className="panel-heading"><span>历史行情</span><small>{points.length} 个交易日</small></div><div className="chart-metric"><b>{last.close.toFixed(2)}</b><span className={change >= 0 ? "positive-move" : "negative-move"}>{change >= 0 ? "+" : ""}{change.toFixed(2)}%</span></div><svg className="price-chart" viewBox="0 0 280 104" role="img" aria-label="iFinD 历史收盘价折线图"><line x1="0" y1="92" x2="280" y2="92" /><polyline points={coordinates} />{markerX !== undefined && markerY !== undefined && <><line className="event-marker" x1={markerX} y1="6" x2={markerX} y2="92" /><circle className="event-marker-dot" cx={markerX} cy={markerY} r="4" /></>}</svg><div className="chart-axis"><span>{first.date}</span><span>{last.date}</span></div>{reaction && selectedIndex >= 0 && <p className="chart-event-label">已标记：{reaction.observedDate}{reaction.observedDate !== reaction.eventDate ? `（对应 ${reaction.eventDate} 披露）` : ""}</p>}<p className="fine-print">收盘价序列，仅用于事件研究窗口观察，不构成收益预测或因果证明。</p><small className="source-reference">{series.sourceLabel} · 抓取于 {series.capturedAt.slice(0, 10)}</small></article>;
+}
+
+function SelectedMarketReaction({ series, selected }: { series?: MarketSeries; selected?: EvidenceItem }) {
+  const reaction = marketReactionForEvent(series, selected?.disclosedAt ?? "");
+  if (!selected) return null;
+  if (!reaction) return <article className="panel selected-market-reaction"><div className="panel-heading"><span>所选节点 · 市场反应</span><small>非因果验证</small></div><p className="fine-print">该节点不在当前行情窗口内，或 iFinD 未返回其后的可交易日，因此不生成涨跌数字。</p></article>;
+  const tPlusOne = reaction.next ? returnFrom(reaction.point.close, reaction.next.close) : undefined;
+  return <article className="panel selected-market-reaction"><div className="panel-heading"><span>所选节点 · 市场反应</span><small>非因果验证</small></div><p className="selected-market-title">{selected.title}</p><div className="selected-market-grid"><div><span>观察窗口</span><b>{reaction.observedDate === reaction.eventDate ? `T0 · ${reaction.observedDate}` : `首个交易日 · ${reaction.observedDate}`}</b></div><div><span>T0 当日涨跌</span><b className={(reaction.point.changePct ?? 0) >= 0 ? "positive-move" : "negative-move"}>{reaction.point.changePct === undefined ? "待补充" : `${reaction.point.changePct >= 0 ? "+" : ""}${reaction.point.changePct.toFixed(2)}%`}</b></div><div><span>T0 收盘价</span><b>{reaction.point.close.toFixed(2)}</b></div><div><span>T+1 相对 T0</span><b className={tPlusOne === undefined || tPlusOne >= 0 ? "positive-move" : "negative-move"}>{tPlusOne === undefined ? "待补充" : `${tPlusOne >= 0 ? "+" : ""}${tPlusOne.toFixed(2)}%`}</b></div></div><p className="fine-print">{reaction.observedDate === reaction.eventDate ? "按披露日对应交易日观察。" : `披露日 ${reaction.eventDate} 非交易日或无有效行情，已顺延至 ${reaction.observedDate}。`} 该观察不证明事件是价格变动的唯一原因。</p></article>;
 }
 
 function CandidateReviewPanel({ task, run, selected, onRunChange, onClose }: { task: ResearchTask; run: AgentRun; selected: EvidenceItem; onRunChange: (run: AgentRun) => void; onClose: () => void }) {
