@@ -1,5 +1,6 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 
+import { marketIdentityForTask } from "./market-identity";
 import type { AgentToolName, AgentToolTrace, EvidenceItem, MarketPoint, MarketSeries, ResearchTask, SourceTier } from "@/lib/types";
 
 type McpTarget = "stock" | "news";
@@ -9,10 +10,6 @@ function historyStart(_cutoffDate: string) {
   // An event lifecycle often starts years before its latest disclosure. The cutoff
   // remains the as-of boundary; retrieval itself must not silently truncate history.
   return "2000-01-01";
-}
-
-function primaryCompanyName(task: ResearchTask) {
-  return (task.companyQuery.split(/[、，,]/)[0] ?? task.companyQuery).replace(/\b\d{6}\b/g, "").trim();
 }
 
 function lifecycleQuery(task: ResearchTask) {
@@ -28,12 +25,16 @@ function lifecycleQuery(task: ResearchTask) {
 function toolCallsFor(task: ResearchTask): Record<AgentToolName, McpCall> {
   const start = historyStart(task.cutoffDate);
   const query = lifecycleQuery(task);
+  const merger = /换股|吸收合并|合并|重组/.test(task.eventQuery);
+  const noticeQuery = merger ? `${task.companyQuery} 换股吸收合并 重大资产重组 预案 审议 审核 核准` : `${query} 筹划 审议 交割 完成 整合 公告`;
+  const newsQuery = merger ? `${task.companyQuery} 换股吸收合并 交割 实施 更名 国泰海通 整合` : `${query} 时间线 进展`;
+  const marketIdentity = marketIdentityForTask(task);
   return {
   search_event_notices: {
     target: "news",
     tool: "search_notice",
     arguments: {
-      query: `${query} 筹划 审议 交割 完成 整合 公告`,
+      query: noticeQuery,
       time_start: start,
       time_end: task.cutoffDate,
       size: 20,
@@ -43,7 +44,7 @@ function toolCallsFor(task: ResearchTask): Record<AgentToolName, McpCall> {
     target: "news",
     tool: "search_news",
     arguments: {
-      query: `${query} 时间线 进展`,
+      query: newsQuery,
       time_start: start,
       time_end: task.cutoffDate,
       size: 20,
@@ -57,7 +58,7 @@ function toolCallsFor(task: ResearchTask): Record<AgentToolName, McpCall> {
   get_historical_market_context: {
     target: "stock",
     tool: "get_stock_performance",
-    arguments: { query: `${primaryCompanyName(task)} 在${start}至${task.cutoffDate}的收盘价、涨跌幅、成交额日频历史行情，仅作同期市场背景` },
+    arguments: { query: `${[marketIdentity?.securityName, marketIdentity?.securityCode].filter(Boolean).join(" ")} 在${start}至${task.cutoffDate}的收盘价、涨跌幅、成交额日频历史行情，仅作同期市场背景` },
   },
   };
 }

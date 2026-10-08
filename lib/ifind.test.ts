@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { extractMarketSeries, extractMcpEvidence } from "./ifind";
+import { marketIdentityForTask } from "./market-identity";
 
 describe("MCP candidate evidence extraction", () => {
   it("keeps a dated, relevant, linked announcement and excludes future or unrelated records", () => {
@@ -179,6 +180,10 @@ describe("MCP candidate evidence extraction", () => {
       { 日期: "2026-09-02", 收盘价: "16.20", 涨跌幅: "-2.41" },
     ] });
     expect(extractMarketSeries(output, { companyQuery: "国泰君安、海通证券", eventQuery: "合并", cutoffDate: "2026-10-08" }, "2026-10-08T00:00:00.000Z")).toBeUndefined();
+  });
+
+  it("resolves the known surviving security for the Guotai Junan-Haitong merger", () => {
+    expect(marketIdentityForTask({ companyQuery: "国泰君安、海通证券", eventQuery: "合并", cutoffDate: "2026-10-08" })).toEqual({ securityName: "国泰海通", securityCode: "601211.SH" });
   });
 
   it("parses iFinD's JSON-wrapped Markdown daily-price table and skips non-trading dates", () => {

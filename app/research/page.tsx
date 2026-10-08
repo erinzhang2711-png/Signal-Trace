@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { evidenceFromImport, nextState, sourceTierFromPublisher } from "@/lib/evidence";
 import { marketReactionForEvent, returnFrom } from "@/lib/market";
 import { buildTimelineGroups, canonicalEventName, timelineStageLabel } from "@/lib/timeline";
+import { marketIdentityForTask } from "@/lib/market-identity";
 import { followedEventId, readWatchlist, WATCHLIST_STORAGE_KEY, type FollowedEvent } from "@/lib/watchlist";
 import type { AgentProposal, AgentRun, EvidenceItem, EventState, ImportedMaterial, MarketSeries, ResearchTask } from "@/lib/types";
 
@@ -209,7 +210,7 @@ function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: Research
   const conclusion = run.proposal?.suggestedConclusion || (evidence.length ? "已检索到候选材料，正在等待 Agent 归并与原文核验；当前不建立正式事件结论。" : "本次未检索到可展示材料，正式事件状态保持待人工核验。");
 
   useEffect(() => {
-    const identity = run.marketSeries;
+    const identity = run.marketSeries ?? marketIdentityForTask(task);
     if (!selected || !identity || (!identity.securityName && !identity.securityCode)) {
       setSelectedMarketSeries(undefined);
       return;
