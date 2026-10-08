@@ -104,6 +104,7 @@ npm run dev
 | `IFIND_MCP_TOKEN` | 是（iFinD 监测） | 仅由服务端 MCP 客户端使用 |
 | `IFIND_NEWS_MCP_URL` | 是（iFinD 监测） | 新闻公告 MCP 的 Streamable HTTP 地址 |
 | `IFIND_STOCK_MCP_URL` | 是（iFinD 监测） | A股数据 MCP 的 Streamable HTTP 地址 |
+| `EXA_API_KEY` | 否（权威原文补链） | 仅供服务端使用；后续用于在交易所、巨潮资讯和公司 IR 域名中发现原文链接，不能作为证据来源本身 |
 
 ## 测试与部署
 
@@ -113,7 +114,7 @@ npm run test
 npm run build
 ```
 
-部署到 Vercel 后，在 Project Settings → Environment Variables 配置一组 `OPENAI_*` 或 `ZHIPU_*`，以及 `IFIND_*` 变量；不要将任何 Key、token 放入客户端变量或 GitHub 仓库。
+部署到 Vercel 后，在 Project Settings → Environment Variables 配置一组 `OPENAI_*` 或 `ZHIPU_*`，以及 `IFIND_*` 变量。启用权威原文自动补链时，再配置 `EXA_API_KEY`；不要将任何 Key、token 放入客户端变量或 GitHub 仓库。
 
 ## 已知边界与未做事项
 
