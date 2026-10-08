@@ -32,4 +32,13 @@ describe("event lifecycle timeline", () => {
     expect(groups[0]).toMatchObject({ stage: "筹划与首次披露", sourceCount: 1 });
     expect(groups[3]).toMatchObject({ stage: "完成后整合", sourceCount: 2, title: "合并后资管平台敲定新任总裁" });
   });
+
+  it("retains every evidence id in a grouped stage so the UI can show every source", () => {
+    const groups = buildTimelineGroups([
+      { ...item("official", "2025-03-14", "换股实施完成，海通证券终止上市"), publisher: "上交所", sourceUrl: "https://example.com/official" },
+      { ...item("coverage", "2025-03-14", "媒体报道换股实施完成"), publisher: "媒体", sourceUrl: "https://example.com/coverage" },
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ sourceCount: 2, evidenceIds: ["official", "coverage"] });
+  });
 });

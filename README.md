@@ -21,6 +21,30 @@
 
 停止条件：无新事实则输出“无状态变化”；来源不足/冲突则转“待人工核验”；工具失败或未调用证据工具则失败退出；达到 4 次调用后停止继续检索。
 
+### 面试讲法：LangChain 语义映射（不新增框架依赖）
+
+运行逻辑保持现状，但可以用 LangChain 的语言清楚解释这套受控架构：
+
+```text
+ResearchTask
+  → Planner（模型选择下一只未用工具）
+  → Tool executor（服务端 iFinD MCP）
+  → Evidence normalizer（统一日期、短引、来源与链接）
+  → Evidence gate（同一事件 / 事实属性 / 来源资格）
+  → Candidate timeline（阶段归并草案）
+  → Human approval（补原文、确认后才写正式版本）
+```
+
+| LangChain 概念 | SignalTrace 对应实现 | 为什么这样设计 |
+| --- | --- | --- |
+| Agent / Planner | `app/api/monitor/route.ts` 的受限工具规划 | 只决定检索顺序，不能改状态或来源等级 |
+| Tools | 四个 iFinD MCP 业务工具 | 只读、最多 4 次、同一工具不可重复 |
+| State | `AgentRun`、`EvidenceItem`、`TimelineGroup` | 每一步可回放，候选和正式版本分开 |
+| Guardrails | `lib/evidence.ts` 的规则校验 | 缺原文、媒体线索或冲突不能升级 |
+| Human-in-the-loop | 候选核验面板与确认按钮 | 人补原文并确认，才创建正式事件版本 |
+
+面试时可以说：**“我采用 LangChain 风格的 Planner–Tools–State–Human approval 分层，但没有为了包装而引入 LangChain 依赖。这样保留了工具轨迹和人工确认的可审计性，也避免框架重写给演示带来新的故障面。”**
+
 ## Agent 状态机与决策边界
 
 这是一个受约束的单 Agent 循环：模型只能从四个业务工具中选择下一步，服务端才真正执行 MCP 调用并回传结果。模型不可读取凭证、不可写入版本、不可自行提高来源等级。
