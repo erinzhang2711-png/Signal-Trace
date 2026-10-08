@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { companyQueryForTargets, RESEARCH_TARGETS, targetSuggestions } from "./research-targets";
+import { companyQueryForTargets, parseResearchTargets, RESEARCH_TARGETS, serializeResearchTargets, targetSuggestions } from "./research-targets";
 
 describe("research targets", () => {
   it("keeps merger predecessors as historical entities instead of current tickers", () => {
@@ -12,5 +12,11 @@ describe("research targets", () => {
 
   it("returns a query made of company entities, not stale codes", () => {
     expect(companyQueryForTargets(targetSuggestions("海通证券"))).toBe("海通证券");
+  });
+
+  it("preserves selected codes for display without adding them to the search query", () => {
+    const selected = targetSuggestions("国泰君安");
+    expect(companyQueryForTargets(selected)).toBe("国泰君安");
+    expect(parseResearchTargets(serializeResearchTargets(selected), "国泰君安")[0]).toMatchObject({ name: "国泰君安", code: "原 601211.SH" });
   });
 });

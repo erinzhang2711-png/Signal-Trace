@@ -21,7 +21,7 @@ export const RESEARCH_TARGETS: ResearchTarget[] = [
 
 export function targetSuggestions(input: string) {
   const query = input.trim().toLowerCase();
-  if (!query) return RESEARCH_TARGETS.slice(0, 6);
+  if (query.length < 2) return [];
   return RESEARCH_TARGETS.filter((target) => `${target.name} ${target.code ?? ""} ${target.successor ?? ""}`.toLowerCase().includes(query));
 }
 
@@ -32,4 +32,20 @@ export function companyQueryForTargets(targets: ResearchTarget[]) {
 export function targetStatusLabel(target: ResearchTarget) {
   if (target.status === "当前交易") return target.code ?? "代码待确认";
   return `${target.status}${target.code ? ` · ${target.code}` : ""}`;
+}
+
+export function serializeResearchTargets(targets: ResearchTarget[]) {
+  return JSON.stringify(targets.map(({ id, name, code, status, successor }) => ({ id, name, code, status, successor })));
+}
+
+export function parseResearchTargets(value: string | null, companyQuery: string): ResearchTarget[] {
+  if (value) {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (Array.isArray(parsed) && parsed.every((target) => target && typeof target === "object" && typeof (target as ResearchTarget).id === "string" && typeof (target as ResearchTarget).name === "string")) return parsed as ResearchTarget[];
+    } catch {
+      // Fall back to names from a direct research URL.
+    }
+  }
+  return companyQuery.split(/[、，,]/).map((name) => name.trim()).filter(Boolean).map((name) => ({ id: `query-${name}`, name, status: "历史主体" as const }));
 }
