@@ -79,6 +79,8 @@ const PUBLISHER_KEYS = ["source", "publisher", "media", "author", "来源", "发
 const BODY_KEYS = ["summary", "content", "abstract", "description", "text", "正文", "摘要", "内容", "简介", "资讯内容", "公告片段内容", "内容摘要"];
 const CLOSE_KEYS = ["close", "close_price", "closeprice", "收盘价", "收盘", "最新价"];
 const CHANGE_KEYS = ["change_pct", "changepercent", "pct_chg", "涨跌幅", "涨跌幅%"];
+const SECURITY_NAME_KEYS = ["security_name", "security_short_name", "证券简称", "股票简称", "简称"];
+const SECURITY_CODE_KEYS = ["security_code", "stock_code", "证券代码", "股票代码", "代码"];
 
 function recordValue(record: UnknownRecord, keys: string[]) {
   const normalized = new Map(Object.entries(record).map(([key, value]) => [key.toLowerCase(), value]));
@@ -325,20 +327,33 @@ function marketPointsFromMarkdown(output: string, task: ResearchTask) {
 
 export function extractMarketSeries(output: string, task: ResearchTask, capturedAt: string): MarketSeries | undefined {
   const seen = new Set<string>();
+  let structuredSecurityName = "";
+  let structuredSecurityCode = "";
   const structuredPoints = parsedDocuments(output).flatMap((document) => nestedRecords(document)).flatMap((record): MarketPoint[] => {
     const date = normalizeDate(recordValue(record, DATE_KEYS));
     const close = numberValue(record, CLOSE_KEYS);
     if (!date || date > task.cutoffDate || close === null || close <= 0 || seen.has(date)) return [];
     seen.add(date);
+    structuredSecurityName ||= recordValue(record, SECURITY_NAME_KEYS);
+    structuredSecurityCode ||= recordValue(record, SECURITY_CODE_KEYS);
     const changePct = numberValue(record, CHANGE_KEYS);
     return [{ date, close, ...(changePct === null ? {} : { changePct }) }];
   }).sort((left, right) => left.date.localeCompare(right.date)).slice(-90);
 
   const markdown = marketPointsFromMarkdown(output, task);
   const points = structuredPoints.length >= 2 ? structuredPoints : markdown.points.sort((left, right) => left.date.localeCompare(right.date));
-  const expected = primaryCompanyName(task);
-  if (markdown.securityName && expected && !markdown.securityName.includes(expected) && !expected.includes(markdown.securityName)) return undefined;
-  return points.length >= 2 ? { sourceLabel: "iFinD A股数据 MCP · 日频历史行情", ...(markdown.securityName ? { securityName: markdown.securityName } : {}), ...(markdown.securityCode ? { securityCode: markdown.securityCode } : {}), points, ...(markdown.nonTradingDates.length ? { nonTradingDates: markdown.nonTradingDates } : {}), capturedAt } : undefined;
+  const securityName = markdown.securityName || structuredSecurityName;
+  const securityCode = markdown.securityCode || structuredSecurityCode;
+  const requestedCodes: string[] = task.companyQuery.match(/\b\d{6}\b/g) ?? [];
+  // A surviving listed entity can be renamed after a merger. When the user supplied
+  // codes, reject a conflicting code; otherwise retain iFinD's explicit identity
+  // and show it verbatim in the UI rather than guessing it from the query.
+  const returnedCode = securityCode.match(/\d{6}/)?.[0] ?? securityCode;
+  if (securityCode && requestedCodes.length > 0 && !requestedCodes.includes(returnedCode)) return undefined;
+  // A market series without an identifier is unsafe in a multi-company event: it
+  // may be either party, a post-merger survivor, or a similarly named security.
+  if (!securityName && !securityCode) return undefined;
+  return points.length >= 2 ? { sourceLabel: "iFinD A股数据 MCP · 日频历史行情", ...(securityName ? { securityName } : {}), ...(securityCode ? { securityCode } : {}), points, ...(markdown.nonTradingDates.length ? { nonTradingDates: markdown.nonTradingDates } : {}), capturedAt } : undefined;
 }
 
 export async function runIFindTool(tool: AgentToolName, task: ResearchTask): Promise<{ trace: AgentToolTrace; output: string; candidates: EvidenceItem[]; marketSeries?: MarketSeries }> {

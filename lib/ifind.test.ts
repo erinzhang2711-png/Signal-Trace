@@ -148,12 +148,21 @@ describe("MCP candidate evidence extraction", () => {
 
   it("extracts a dated close-price series only when the MCP returns real daily fields", () => {
     const output = JSON.stringify({ data: [
-      { 日期: "2026-09-01", 收盘价: "312.40", 涨跌幅: "1.20" },
-      { 日期: "2026-09-02", 收盘价: "316.00", 涨跌幅: "1.15" },
+      { 日期: "2026-09-01", 收盘价: "312.40", 涨跌幅: "1.20", 证券简称: "宁德时代", 证券代码: "300750.SZ" },
+      { 日期: "2026-09-02", 收盘价: "316.00", 涨跌幅: "1.15", 证券简称: "宁德时代", 证券代码: "300750.SZ" },
     ] });
     const series = extractMarketSeries(output, { companyQuery: "宁德时代", eventQuery: "收购耀宁", cutoffDate: "2026-10-08" }, "2026-10-08T00:00:00.000Z");
 
     expect(series?.points).toEqual([{ date: "2026-09-01", close: 312.4, changePct: 1.2 }, { date: "2026-09-02", close: 316, changePct: 1.15 }]);
+    expect(series).toMatchObject({ securityName: "宁德时代", securityCode: "300750.SZ" });
+  });
+
+  it("withholds an ambiguous price series that has no security identity", () => {
+    const output = JSON.stringify({ data: [
+      { 日期: "2026-09-01", 收盘价: "16.60", 涨跌幅: "-1.60" },
+      { 日期: "2026-09-02", 收盘价: "16.20", 涨跌幅: "-2.41" },
+    ] });
+    expect(extractMarketSeries(output, { companyQuery: "国泰君安、海通证券", eventQuery: "合并", cutoffDate: "2026-10-08" }, "2026-10-08T00:00:00.000Z")).toBeUndefined();
   });
 
   it("parses iFinD's JSON-wrapped Markdown daily-price table and skips non-trading dates", () => {
@@ -165,5 +174,6 @@ describe("MCP candidate evidence extraction", () => {
       { date: "2025-06-11", close: 135.5, changePct: -4.564, amount: 4367180000, volume: 31970969 },
     ]);
     expect(series?.nonTradingDates).toEqual(["2025-06-09", "2025-06-08"]);
+    expect(series).toMatchObject({ securityName: "海光信息", securityCode: "688041.SH" });
   });
 });
