@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { evidenceFromImport, nextState } from "@/lib/evidence";
 import { researchTaskWarning } from "@/lib/task-validation";
+import { companyQueryForTargets, type ResearchTarget, targetStatusLabel, targetSuggestions } from "@/lib/research-targets";
 import { EVENT_META, marketReactionFor, SEED_EVIDENCE, SEED_VERSIONS } from "@/lib/seed-data";
 import type { AgentProposal, AgentRun, EvidenceItem, EventState, EventVersion, ImportedMaterial, MarketReaction, ResearchTask } from "@/lib/types";
 import { readWatchlist, WATCHLIST_STORAGE_KEY, type FollowedEvent } from "@/lib/watchlist";
@@ -47,6 +48,9 @@ export default function Home() {
   const [monitoring, setMonitoring] = useState(false);
   const [mode, setMode] = useState<"start" | "demo">("start");
   const [task, setTask] = useState<ResearchTask>(EMPTY_TASK);
+  const [targetInput, setTargetInput] = useState("");
+  const [selectedTargets, setSelectedTargets] = useState<ResearchTarget[]>([]);
+  const [targetPickerOpen, setTargetPickerOpen] = useState(false);
   const [followedEvents, setFollowedEvents] = useState<FollowedEvent[]>([]);
 
   useEffect(() => {
@@ -148,6 +152,27 @@ export default function Home() {
     router.push(`/research?${params.toString()}`);
   }
 
+  function addTarget(target: ResearchTarget) {
+    if (selectedTargets.some((item) => item.id === target.id)) {
+      setTargetInput("");
+      return;
+    }
+    const next = [...selectedTargets, target];
+    setSelectedTargets(next);
+    setTask({ ...task, companyQuery: companyQueryForTargets(next) });
+    setTargetInput("");
+    setTargetPickerOpen(false);
+    setError(null);
+  }
+
+  function removeTarget(id: string) {
+    const next = selectedTargets.filter((target) => target.id !== id);
+    setSelectedTargets(next);
+    setTask({ ...task, companyQuery: companyQueryForTargets(next) });
+  }
+
+  const visibleTargetSuggestions = targetSuggestions(targetInput).filter((target) => !selectedTargets.some((item) => item.id === target.id));
+
   function returnToResearchStart() {
     setMode("start");
     setError(null);
@@ -218,7 +243,7 @@ export default function Home() {
           <p>输入标的与足以识别同一事件的线索。Agent 将规划 iFinD MCP 检索、比较证据，并把不确定结论留给你确认。</p>
           <div className="research-card panel">
             <div className="research-step"><span>01</span><div><b>定义研究任务</b><small>不需要先知道公告编号；请带上交易对手、标的或事件名称，避免“收购”这类宽泛检索。</small></div></div>
-            <label>公司 / 标的<input value={task.companyQuery} onChange={(event) => setTask({ ...task, companyQuery: event.target.value })} placeholder="例如：宁德时代 300750、特斯拉" /></label>
+            <label>公司 / 标的<div className="target-picker"><div className="target-chips">{selectedTargets.map((target) => <span key={target.id} className={`target-chip target-${target.status === "当前交易" ? "active" : "historical"}`}><b>{target.name}</b><small>{targetStatusLabel(target)}</small><button type="button" aria-label={`移除 ${target.name}`} onClick={() => removeTarget(target.id)}>×</button></span>)}</div><input value={targetInput} onFocus={() => setTargetPickerOpen(true)} onBlur={() => setTargetPickerOpen(false)} onChange={(event) => setTargetInput(event.target.value)} placeholder={selectedTargets.length ? "继续添加公司或代码" : "输入公司名或股票代码，例如：国泰君安、601211"} />{targetPickerOpen && <div className="target-suggestions">{visibleTargetSuggestions.map((target) => <button type="button" key={target.id} onMouseDown={(event) => event.preventDefault()} onClick={() => addTarget(target)}><span><b>{target.name}</b><small>{targetStatusLabel(target)}</small></span>{target.successor && <em>存续：{target.successor}</em>}</button>)}{targetInput.trim().length >= 2 && !visibleTargetSuggestions.length && <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => addTarget({ id: `manual-${targetInput.trim()}`, name: targetInput.trim(), status: "历史主体" })}><span><b>添加“{targetInput.trim()}”</b><small>代码待确认</small></span><em>Agent 不会猜测代码</em></button>}</div>}<small className="target-picker-hint">可多选。历史主体和已退市证券保留原名称；行情会优先使用其存续证券，避免把失效代码当作当前标的。</small></div></label>
             <label>事件关键词<input value={task.eventQuery} onChange={(event) => setTask({ ...task, eventQuery: event.target.value })} placeholder="例如：收购 ××公司、定增、并购重组、业绩预告" /></label>
             <label>历史截点<input type="date" value={task.cutoffDate} onChange={(event) => setTask({ ...task, cutoffDate: event.target.value })} /></label>
             {researchTaskWarning(task) && <div className="error-box">{researchTaskWarning(task)}</div>}
