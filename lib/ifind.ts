@@ -356,6 +356,37 @@ export function extractMarketSeries(output: string, task: ResearchTask, captured
   return points.length >= 2 ? { sourceLabel: "iFinD A股数据 MCP · 日频历史行情", ...(securityName ? { securityName } : {}), ...(securityCode ? { securityCode } : {}), points, ...(markdown.nonTradingDates.length ? { nonTradingDates: markdown.nonTradingDates } : {}), capturedAt } : undefined;
 }
 
+function dateOffset(date: string, days: number) {
+  const value = new Date(`${date}T00:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
+export async function fetchEventMarketWindow(identity: Pick<MarketSeries, "securityName" | "securityCode">, eventDate: string, cutoffDate: string): Promise<MarketSeries | undefined> {
+  const token = process.env.IFIND_MCP_TOKEN;
+  const url = serverUrl("stock");
+  if (!token || !url || (!identity.securityName && !identity.securityCode)) return undefined;
+  const start = dateOffset(eventDate, -45);
+  const end = dateOffset(eventDate, 45) > cutoffDate ? cutoffDate : dateOffset(eventDate, 45);
+  const identifier = [identity.securityName, identity.securityCode].filter(Boolean).join(" ");
+  const task: ResearchTask = { companyQuery: identifier, eventQuery: "事件节点市场背景", cutoffDate: end };
+  const client = new Client({ name: "signaltrace-event-window", version: "0.1.0" });
+  const transport = new StreamableHTTPClientTransport(new URL(url), {
+    requestInit: { headers: { Authorization: token } },
+    onInsufficientScope: "throw",
+  });
+  try {
+    await client.connect(transport, { timeout: 15_000 });
+    const result = await client.callTool({ name: "get_stock_performance", arguments: { query: `${identifier} 在${start}至${end}的收盘价、涨跌幅、成交额日频历史行情，仅作${eventDate}事件节点市场背景` } }, { timeout: 15_000 });
+    const series = extractMarketSeries(textFromResult(result.content), task, new Date().toISOString());
+    return series ? { ...series, sourceLabel: `iFinD A股数据 MCP · ${eventDate} 事件窗口日频行情` } : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    await transport.close().catch(() => undefined);
+  }
+}
+
 export async function runIFindTool(tool: AgentToolName, task: ResearchTask): Promise<{ trace: AgentToolTrace; output: string; candidates: EvidenceItem[]; marketSeries?: MarketSeries }> {
   const call = toolCallsFor(task)[tool];
   const token = process.env.IFIND_MCP_TOKEN;

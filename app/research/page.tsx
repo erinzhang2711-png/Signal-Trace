@@ -132,6 +132,8 @@ function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: Research
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [following, setFollowing] = useState(false);
   const [reviewing, setReviewing] = useState(false);
+  const [selectedMarketSeries, setSelectedMarketSeries] = useState<MarketSeries | undefined>();
+  const [marketLoading, setMarketLoading] = useState(false);
   const eventName = run.eventName || canonicalEventName(task, evidence);
   const securities = securityLabels(task.companyQuery);
   const followId = followedEventId(task);
@@ -154,6 +156,29 @@ function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: Research
   const state = run.proposal?.proposedState ?? "待人工核验";
   const conclusion = run.proposal?.suggestedConclusion || (evidence.length ? "已检索到候选材料，正在等待 Agent 归并与原文核验；当前不建立正式事件结论。" : "本次未检索到可展示材料，正式事件状态保持待人工核验。");
 
+  useEffect(() => {
+    const identity = run.marketSeries;
+    if (!selected || !identity || (!identity.securityName && !identity.securityCode)) {
+      setSelectedMarketSeries(undefined);
+      return;
+    }
+    const controller = new AbortController();
+    setMarketLoading(true);
+    setSelectedMarketSeries(undefined);
+    void fetch("/api/market", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({ eventDate: selected.disclosedAt, cutoffDate: task.cutoffDate, securityName: identity.securityName, securityCode: identity.securityCode }),
+    }).then(async (response) => {
+      const data = (await response.json()) as { series?: MarketSeries };
+      if (!controller.signal.aborted) setSelectedMarketSeries(data.series);
+    }).catch(() => undefined).finally(() => {
+      if (!controller.signal.aborted) setMarketLoading(false);
+    });
+    return () => controller.abort();
+  }, [run.marketSeries, selected?.disclosedAt, selected?.id, task.cutoffDate]);
+
   return <main>
     <header className="topbar"><div className="topbar-left"><div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div><a className="topbar-start" href="/">← 开始新研究</a></div><div className="topbar-meta">金融事件证据 Agent <span className="divider" /> 不构成投资建议</div></header>
     <section className="hero"><div><p className="eyebrow">{canBuildTimeline ? "EVIDENCE-FIRST EVENT INTELLIGENCE" : "CANDIDATE EVENT RESEARCH"}</p><h1>{eventName}</h1><p className="subtitle">从首次可得披露回溯至 {task.cutoffDate} 的研究快照</p></div><div className="watchlist"><span>研究标的</span><div className="security-labels">{securities.map((security) => <b key={`${security.name}-${security.code ?? ""}`}>{security.name}{security.code ? <small>{security.code}</small> : <em>待代码确认</em>}</b>)}</div><button className={`follow-button ${following ? "is-following" : ""}`} onClick={toggleFollowing}>{following ? "✓ 已关注" : "+ 关注事件"}</button><small>{following ? "已保存到首页关注列表；当前仅在此浏览器保存。" : "关注后可从首页重新进入这项研究。"}</small></div></section>
@@ -161,8 +186,8 @@ function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: Research
       <aside className="left-column">
         <article className="panel conclusion-card"><div className="panel-label">当前事件状态</div><div className="state-row"><span className={`status-pill ${stateTone[state]}`}>{state}</span><span className="version">{canBuildTimeline ? "正式草案" : "候选研究"}</span></div><p>{conclusion}</p><div className="risk-callout"><strong>{canBuildTimeline ? "风险提示" : "候选时间线"}</strong><span>{canBuildTimeline ? "候选材料不等于正式结论；未直达原文或未识别交易对手时，系统不会升级事件状态。" : "下方先展示可读的候选时间线；只有带原文、短引和同一事件匹配的节点，才可升格为正式事实。"}</span></div></article>
         <article className="panel market-card"><div className="panel-heading"><span>检索覆盖</span><small>非因果验证</small></div><div className="market-grid"><div><span>工具调用</span><b>{run.toolCalls.length} 次</b></div><div><span>候选材料</span><b>{evidence.length} 条</b></div><div><span>数据口径</span><b>历史快照</b></div></div><p className="fine-print">公告、新闻、披露事件与市场背景由 MCP 查询；市场数据仅作上下文，不输出涨跌预测或买卖建议。</p></article>
-        <MarketChart series={run.marketSeries} selected={selected} />
-        <SelectedMarketReaction series={run.marketSeries} selected={selected} />
+        <MarketChart series={selectedMarketSeries} selected={selected} loading={marketLoading} />
+        <SelectedMarketReaction series={selectedMarketSeries} selected={selected} loading={marketLoading} />
         <article className="panel version-card"><div className="panel-heading"><span>结论演化</span><small>1 个版本</small></div><ol className="versions"><li><i className={stateTone[state]} /><div><b>{state}</b><span>{task.cutoffDate}</span><p>{run.stopReason}</p></div></li></ol></article>
       </aside>
       <section className="center-column panel"><div className="timeline-header"><div><div className="panel-label">{canBuildTimeline ? "证据时间线" : "候选研究时间线"}</div><h2>按事件阶段归并，而不是堆叠原始文章</h2></div><span>{timelineGroups.length} 个阶段 · {evidence.length} 条材料</span></div><div className="legend"><span><i className="dot official" />交易所/公司公告</span><span><i className="dot ir" />投资者关系</span><span><i className="dot user" />媒体 / 待归并</span></div><div className="timeline">{timelineGroups.length ? timelineGroups.map((group) => { const representative = evidence.find((item) => item.id === group.representativeEvidenceId); return <button className={`timeline-item ${selected?.id === group.representativeEvidenceId ? "selected" : ""}`} key={group.id} onClick={() => { setSelectedId(group.representativeEvidenceId); setReviewing(false); }}><div className="date"><b>{group.dateLabel}</b><span>{group.sourceCount} 个来源</span></div><i className={`line-dot ${representative?.sourceTier === "交易所/公司公告" ? "official" : representative?.sourceTier === "公司投资者关系" ? "ir" : "user"}`} /><div className="timeline-copy"><div><span className="kind-tag">{timelineStageLabel(group.stage)}</span>{!canBuildTimeline && <span className="review-mini">待核验</span>}</div><h3>{group.title}</h3><p>{group.summary}</p><small>点击查看代表材料、原文与当日市场反应</small></div></button>; }) : <div className="timeline-empty">本次没有提取出同时匹配公司与事件关键词的材料。请补充公司代码、交易对手或更具体的事件名称后重新运行。</div>}</div></section>
@@ -175,8 +200,9 @@ function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: Research
   </main>;
 }
 
-function MarketChart({ series, selected }: { series?: MarketSeries; selected?: EvidenceItem }) {
-  if (!series) return <article className="panel market-chart"><div className="panel-heading"><span>历史行情 · 标的未确认</span><small>不展示</small></div><p className="fine-print">iFinD 本次未同时返回可核对的证券简称或代码。对于多公司合并研究，系统不会猜测这条行情属于原国泰君安、原海通证券，还是合并后存续主体；请在输入中补充证券代码后重新运行。</p></article>;
+function MarketChart({ series, selected, loading }: { series?: MarketSeries; selected?: EvidenceItem; loading: boolean }) {
+  if (loading) return <article className="panel market-chart"><div className="panel-heading"><span>历史行情 · 节点窗口</span><small>正在更新</small></div><p className="fine-print">正在读取所选节点前后约 30 个交易日的 iFinD 日频行情…</p></article>;
+  if (!series) return <article className="panel market-chart"><div className="panel-heading"><span>历史行情 · 节点窗口不可用</span><small>不展示</small></div><p className="fine-print">iFinD 未返回所选节点附近可核对的日频行情。系统不会用稀疏的长周期序列替代该节点的市场反应。</p></article>;
   const reaction = marketReactionForEvent(series, selected?.disclosedAt ?? "");
   const observedIndex = reaction ? series.points.findIndex((point) => point.date === reaction.observedDate) : -1;
   const windowStart = observedIndex >= 0 ? Math.max(0, Math.min(observedIndex - 30, series.points.length - 60)) : Math.max(0, series.points.length - 60);
@@ -196,7 +222,8 @@ function MarketChart({ series, selected }: { series?: MarketSeries; selected?: E
   return <article className="panel market-chart"><div className="panel-heading"><span>{label} · 历史行情</span><small>{points.length} 个交易日</small></div><div className="chart-metric"><b>{last.close.toFixed(2)}</b><span className={change >= 0 ? "positive-move" : "negative-move"}>{change >= 0 ? "+" : ""}{change.toFixed(2)}%</span></div><svg className="price-chart" viewBox="0 0 280 104" role="img" aria-label={`${label} 的 iFinD 历史收盘价折线图`}><line x1="0" y1="92" x2="280" y2="92" /><polyline points={coordinates} />{markerX !== undefined && markerY !== undefined && <><line className="event-marker" x1={markerX} y1="6" x2={markerX} y2="92" /><circle className="event-marker-dot" cx={markerX} cy={markerY} r="4" /></>}</svg><div className="chart-axis"><span>{first.date}</span><span>{last.date}</span></div>{reaction && selectedIndex >= 0 && <p className="chart-event-label">已标记：{reaction.observedDate}{reaction.observedDate !== reaction.eventDate ? `（对应 ${reaction.eventDate} 披露）` : ""}</p>}<p className="fine-print">本图只对应 {label}；收盘价仅用于事件研究窗口观察，不构成收益预测或因果证明。</p><small className="source-reference">{series.sourceLabel} · 抓取于 {series.capturedAt.slice(0, 10)}</small></article>;
 }
 
-function SelectedMarketReaction({ series, selected }: { series?: MarketSeries; selected?: EvidenceItem }) {
+function SelectedMarketReaction({ series, selected, loading }: { series?: MarketSeries; selected?: EvidenceItem; loading: boolean }) {
+  if (loading) return <article className="panel selected-market-reaction"><div className="panel-heading"><span>所选节点 · 市场反应</span><small>节点窗口加载中</small></div></article>;
   const reaction = marketReactionForEvent(series, selected?.disclosedAt ?? "");
   if (!selected) return null;
   if (!reaction) return <article className="panel selected-market-reaction"><div className="panel-heading"><span>所选节点 · 市场反应</span><small>非因果验证</small></div><p className="fine-print">该节点不在当前行情窗口内，或 iFinD 未返回其后的可交易日，因此不生成涨跌数字。</p></article>;
