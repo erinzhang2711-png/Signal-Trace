@@ -93,9 +93,23 @@ export type MarketPoint = {
 
 export type MarketSeries = {
   sourceLabel: string;
+  securityName?: string;
+  securityCode?: string;
   points: MarketPoint[];
   nonTradingDates?: string[];
   capturedAt: string;
+};
+
+export type TimelineStage = "筹划与首次披露" | "方案审议" | "监管审核" | "交易实施" | "完成后整合" | "后续进展";
+
+export type TimelineGroup = {
+  id: string;
+  stage: TimelineStage;
+  dateLabel: string;
+  summary: string;
+  evidenceIds: string[];
+  sourceCount: number;
+  representativeEvidenceId: string;
 };
 
 export type AgentRun = {
@@ -108,6 +122,8 @@ export type AgentRun = {
   proposal: AgentProposal | null;
   evidence?: EvidenceItem[];
   marketSeries?: MarketSeries;
+  eventName?: string;
+  timelineGroups?: TimelineGroup[];
 };
 
 export type ResearchTask = {

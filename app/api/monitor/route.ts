@@ -5,6 +5,7 @@ import { z } from "zod";
 import { AGENT_TOOL_NAMES, runIFindTool } from "@/lib/ifind";
 import { sourceTierFromPublisher } from "@/lib/evidence";
 import { getLLMRuntime } from "@/lib/llm";
+import { buildTimelineGroups, canonicalEventName } from "@/lib/timeline";
 import type { AgentProposal, AgentRun, AgentToolName, EvidenceItem, MarketSeries, ResearchTask } from "@/lib/types";
 
 const inputSchema = z.object({
@@ -47,7 +48,7 @@ const toolDescription: Record<AgentToolName, string> = {
   search_event_notices: "查询目标事件的公告片段。用于确认披露事实与当前程序状态；优先使用。",
   search_related_news: "查询目标事件的新闻片段。只能用于补充传播与观点，不能覆盖公告事实。",
   get_disclosed_event_context: "查询两家上市公司的公开披露事件背景。用于核对事件归属和进展。",
-  get_historical_market_context: "查询固定历史窗口的日频行情。仅作为同期市场背景，绝不推断因果或投资建议。",
+  get_historical_market_context: "查询研究标的的日频行情。仅作为同期市场背景，绝不推断因果或投资建议。",
 };
 
 const tools = AGENT_TOOL_NAMES.map((name) => ({
@@ -69,7 +70,7 @@ const SYSTEM_PROMPT = `你是 SignalTrace 的单一投资事件证据 Agent。�
 
 公告和公司披露优先于新闻；新闻、观点、传闻不能把“尚需审议、审核或注册”的交易升级为“已完成”。来源不充分、工具失败、材料冲突时，decision 必须为“待人工核验”。若没有足以改变当前结论的新事实，decision 必须为“无状态变化”。quote 必须可在工具返回材料中逐字找到；没有可靠短引时使用空字符串并要求人工核验。所有结果仅为草案，必须由用户确认后才可能写入版本。
 
-你还必须在 evidence 数组中输出 0 至 6 条候选时间线证据，按披露日升序。每条证据必须直接提到研究公司和事件线索，或明确是该事件的后续进展；不得因为公司名称出现在财报、员工持股、通用资本运作分类页中就收录。每条证据只能来自工具返回内容：标题、发布者、日期、原文短引和摘要不得补写或猜测。工具结果中没有可直达原文 URL 时，sourceUrl 必须为空字符串，sourceLabel 写“待补原文链接”，来源等级最多为“媒体报道”；严禁编造 URL 或把搜索摘要伪装为交易所公告。不得输出历史截点之后或日期格式不完整的材料。`;
+你还必须在 evidence 数组中输出 0 至 12 条候选时间线证据，按披露日升序，尽量覆盖从首次披露、方案审议、监管审核、交易实施到完成后整合的完整生命周期。每条证据必须直接提到研究公司和事件线索，或明确是该事件的后续进展；不得因为公司名称出现在财报、员工持股、通用资本运作分类页中就收录。每条证据只能来自工具返回内容：标题、发布者、日期、原文短引和摘要不得补写或猜测。工具结果中没有可直达原文 URL 时，sourceUrl 必须为空字符串，sourceLabel 写“待补原文链接”，来源等级最多为“媒体报道”；严禁编造 URL 或把搜索摘要伪装为交易所公告。不得输出历史截点之后或日期格式不完整的材料。`;
 
 function proposalFrom(result: Record<string, unknown>): AgentProposal {
   return {
@@ -247,7 +248,7 @@ export async function POST(request: Request) {
     };
     const decision = result.decision as string;
     const status: AgentRun["status"] = modelEvidence.length === 0 || decision === "待人工核验" || proposal.requiresReview ? "待人工核验" : decision === "无状态变化" ? "无状态变化" : "待用户确认";
-    const run: AgentRun = { id: `run-${Date.now()}`, status, startedAt, endedAt: new Date().toISOString(), stopReason: extractedEvidence.length === 0 ? "未提取到可构建同一事件时间线的证据节点。" : modelEvidence.length === 0 ? "已展示代码提取的候选时间线；等待 Agent 归并与人工核验。" : (result.stopReason as string) || "已完成有限工具调用。", toolCalls: traces, proposal, evidence: extractedEvidence, marketSeries };
+    const run: AgentRun = { id: `run-${Date.now()}`, status, startedAt, endedAt: new Date().toISOString(), stopReason: extractedEvidence.length === 0 ? "未提取到可构建同一事件时间线的证据节点。" : modelEvidence.length === 0 ? "已展示代码提取的候选时间线；等待 Agent 归并与人工核验。" : (result.stopReason as string) || "已完成有限工具调用。", toolCalls: traces, proposal, evidence: extractedEvidence, marketSeries, eventName: canonicalEventName(payload.data.task), timelineGroups: buildTimelineGroups(extractedEvidence) };
     return NextResponse.json({ run });
   } catch (error) {
     const run = failedRun(startedAt, traces, monitorFailureReason(runtime, traces.length, error));
@@ -295,7 +296,7 @@ function mergeEvidence(modelEvidence: EvidenceItem[], mcpEvidence: EvidenceItem[
     const key = `${item.title.trim()}|${item.disclosedAt}|${item.sourceUrl}`;
     merged.set(key, item);
   }
-  return [...merged.values()].sort((left, right) => left.disclosedAt.localeCompare(right.disclosedAt)).slice(0, 6);
+  return [...merged.values()].sort((left, right) => left.disclosedAt.localeCompare(right.disclosedAt)).slice(0, 30);
 }
 
 function failedRun(startedAt: string, traces: AgentRun["toolCalls"], stopReason: string): AgentRun {
@@ -303,5 +304,5 @@ function failedRun(startedAt: string, traces: AgentRun["toolCalls"], stopReason:
 }
 
 function monitorPrompt(task: ResearchTask, currentState: string, currentConclusion: string) {
-  return `研究任务：\n公司/标的：${task.companyQuery}\n事件关键词：${task.eventQuery}\n历史截点：${task.cutoffDate}\n\n当前状态：${currentState}\n当前结论：${currentConclusion}\n请检查该任务在历史截点前的外部证据，并根据工具结果生成草案。`;
+  return `研究任务：\n公司/标的：${task.companyQuery}\n事件关键词：${task.eventQuery}\n历史截点：${task.cutoffDate}\n\n当前状态：${currentState}\n当前结论：${currentConclusion}\n请从首次可得披露开始回溯该事件的完整生命周期；历史截点只是上限，不是六个月或十八个月的检索窗口。根据工具结果生成草案。`;
 }

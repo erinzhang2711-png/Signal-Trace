@@ -5,10 +5,14 @@ import type { AgentToolName, AgentToolTrace, EvidenceItem, MarketPoint, MarketSe
 type McpTarget = "stock" | "news";
 type McpCall = { target: McpTarget; tool: string; arguments: Record<string, string | number> };
 
-function historyStart(cutoffDate: string) {
-  const cutoff = new Date(`${cutoffDate}T00:00:00Z`);
-  cutoff.setUTCMonth(cutoff.getUTCMonth() - 6);
-  return cutoff.toISOString().slice(0, 10);
+function historyStart(_cutoffDate: string) {
+  // An event lifecycle often starts years before its latest disclosure. The cutoff
+  // remains the as-of boundary; retrieval itself must not silently truncate history.
+  return "2000-01-01";
+}
+
+function primaryCompanyName(task: ResearchTask) {
+  return (task.companyQuery.split(/[、，,]/)[0] ?? task.companyQuery).replace(/\b\d{6}\b/g, "").trim();
 }
 
 function toolCallsFor(task: ResearchTask): Record<AgentToolName, McpCall> {
@@ -19,20 +23,20 @@ function toolCallsFor(task: ResearchTask): Record<AgentToolName, McpCall> {
     target: "news",
     tool: "search_notice",
     arguments: {
-      query: `${query} 公告 进展`,
+      query: `${query} 筹划 预案 审议 审核 实施 完成 整合 公告`,
       time_start: start,
       time_end: task.cutoffDate,
-      size: 5,
+      size: 10,
     },
   },
   search_related_news: {
     target: "news",
     tool: "search_news",
     arguments: {
-      query,
+      query: `${query} 时间线 进展`,
       time_start: start,
       time_end: task.cutoffDate,
-      size: 5,
+      size: 10,
     },
   },
   get_disclosed_event_context: {
@@ -43,7 +47,7 @@ function toolCallsFor(task: ResearchTask): Record<AgentToolName, McpCall> {
   get_historical_market_context: {
     target: "stock",
     tool: "get_stock_performance",
-    arguments: { query: `${task.companyQuery} 在${start}至${task.cutoffDate}的收盘价、涨跌幅、成交额日频历史行情，仅作同期市场背景` },
+    arguments: { query: `${primaryCompanyName(task)} 在${start}至${task.cutoffDate}的收盘价、涨跌幅、成交额日频历史行情，仅作同期市场背景` },
   },
   };
 }
@@ -268,6 +272,8 @@ function marketPointsFromMarkdown(output: string, task: ResearchTask) {
   const points: MarketPoint[] = [];
   const nonTradingDates: string[] = [];
   const seen = new Set<string>();
+  let securityName = "";
+  let securityCode = "";
 
   for (const text of texts) {
     const lines = text.split(/\r?\n/);
@@ -276,6 +282,8 @@ function marketPointsFromMarkdown(output: string, task: ResearchTask) {
     const headers = lines[headerIndex].split("|").map((cell) => cell.trim()).filter(Boolean);
     const dateIndex = headers.findIndex((header) => header === "日期");
     const closeIndex = headers.findIndex((header) => header === "收盘价");
+    const nameIndex = headers.findIndex((header) => header === "证券简称");
+    const codeIndex = headers.findIndex((header) => header === "证券代码");
     const changeIndex = headers.findIndex((header) => header.startsWith("涨跌幅"));
     const volumeIndex = headers.findIndex((header) => header === "成交量");
     const amountIndex = headers.findIndex((header) => header.startsWith("成交额"));
@@ -297,10 +305,12 @@ function marketPointsFromMarkdown(output: string, task: ResearchTask) {
         continue;
       }
       seen.add(date);
+      securityName ||= nameIndex >= 0 ? cells[nameIndex] ?? "" : "";
+      securityCode ||= codeIndex >= 0 ? cells[codeIndex] ?? "" : "";
       points.push({ date, close, ...(changePct === null ? {} : { changePct }), ...(volume === null ? {} : { volume }), ...(amount === null ? {} : { amount }) });
     }
   }
-  return { points, nonTradingDates: [...new Set(nonTradingDates)] };
+  return { points, nonTradingDates: [...new Set(nonTradingDates)], securityName, securityCode };
 }
 
 export function extractMarketSeries(output: string, task: ResearchTask, capturedAt: string): MarketSeries | undefined {
@@ -316,7 +326,9 @@ export function extractMarketSeries(output: string, task: ResearchTask, captured
 
   const markdown = marketPointsFromMarkdown(output, task);
   const points = structuredPoints.length >= 2 ? structuredPoints : markdown.points.sort((left, right) => left.date.localeCompare(right.date));
-  return points.length >= 2 ? { sourceLabel: "iFinD A股数据 MCP · 日频历史行情", points, ...(markdown.nonTradingDates.length ? { nonTradingDates: markdown.nonTradingDates } : {}), capturedAt } : undefined;
+  const expected = primaryCompanyName(task);
+  if (markdown.securityName && expected && !markdown.securityName.includes(expected) && !expected.includes(markdown.securityName)) return undefined;
+  return points.length >= 2 ? { sourceLabel: "iFinD A股数据 MCP · 日频历史行情", ...(markdown.securityName ? { securityName: markdown.securityName } : {}), ...(markdown.securityCode ? { securityCode: markdown.securityCode } : {}), points, ...(markdown.nonTradingDates.length ? { nonTradingDates: markdown.nonTradingDates } : {}), capturedAt } : undefined;
 }
 
 export async function runIFindTool(tool: AgentToolName, task: ResearchTask): Promise<{ trace: AgentToolTrace; output: string; candidates: EvidenceItem[]; marketSeries?: MarketSeries }> {

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { evidenceFromImport, nextState } from "@/lib/evidence";
 import { EVENT_META, marketReactionFor, SEED_EVIDENCE, SEED_VERSIONS } from "@/lib/seed-data";
 import type { AgentProposal, AgentRun, EvidenceItem, EventState, EventVersion, ImportedMaterial, MarketReaction, ResearchTask } from "@/lib/types";
+import { readWatchlist, WATCHLIST_STORAGE_KEY, type FollowedEvent } from "@/lib/watchlist";
 
 const STORAGE_KEY = "signaltrace-hygon-sugon-v2";
 const DEMO_TASK: ResearchTask = { companyQuery: "海光信息 688041、中科曙光 603019", eventQuery: "换股吸收合并 重大资产重组", cutoffDate: "2025-09-06" };
@@ -45,6 +46,7 @@ export default function Home() {
   const [monitoring, setMonitoring] = useState(false);
   const [mode, setMode] = useState<"start" | "demo">("start");
   const [task, setTask] = useState<ResearchTask>(EMPTY_TASK);
+  const [followedEvents, setFollowedEvents] = useState<FollowedEvent[]>([]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem(STORAGE_KEY);
@@ -63,6 +65,10 @@ export default function Home() {
       }
     });
     return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    setFollowedEvents(readWatchlist(window.localStorage.getItem(WATCHLIST_STORAGE_KEY)));
   }, []);
 
   useEffect(() => {
@@ -207,6 +213,7 @@ export default function Home() {
             {error && <div className="error-box">{error}</div>}
             <button className="primary-button research-button" onClick={startResearch} disabled={monitoring}>{monitoring ? "Agent 正在检索证据…" : "让 Agent 开始研究 →"}</button>
           </div>
+          {followedEvents.length > 0 && <section className="followed-events panel"><div className="panel-heading"><span>已关注事件</span><small>此浏览器本地保存</small></div><p className="fine-print">从这里重新打开已关注的研究；当前版本不在后台自动抓取新公告。</p><div className="followed-event-list">{followedEvents.map((event) => <button key={event.id} onClick={() => { const params = new URLSearchParams({ company: event.task.companyQuery, event: event.task.eventQuery, cutoff: event.task.cutoffDate }); router.push(`/research?${params.toString()}`); }}><b>{event.eventName}</b><span>{event.securities.map((security) => `${security.name}${security.code ? ` ${security.code}` : ""}`).join(" · ")} · 截至 {event.task.cutoffDate}</span></button>)}</div></section>}
           <button className="case-link" onClick={() => setMode("demo")}>查看「海光信息 × 中科曙光」完整案例演示 →</button>
         </section>
       </main>
