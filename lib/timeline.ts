@@ -16,10 +16,6 @@ function companies(companyQuery: string) {
     .filter((value): value is string => Boolean(value));
 }
 
-function companyFromText(text: string) {
-  return text.match(/宁德时代|国泰君安|海通证券|国泰海通|海光信息|中科曙光/)?.[0] ?? "";
-}
-
 function entityFromText(text: string, hint = "") {
   const scopes = [...text.split(/收购|并购/).slice(1), text];
   const entities = scopes.flatMap((scope) => scope.match(/[\u4e00-\u9fa5]{2,}(?:新能源科技|新能源|科技)?(?:股份|有限责任)?公司/g) ?? []);
@@ -42,6 +38,7 @@ export function canonicalEventName(task: ResearchTask, evidence: EvidenceItem[] 
 
 export function timelineStage(item: EvidenceItem): TimelineStage {
   const text = `${item.title} ${item.summary} ${item.quote}`;
+  if (/(终止筹划|终止本次|终止.*(重组|合并|交易)|项目终止|不再推进|撤回.*(重组|合并|交易))/.test(text) && !/终止上市/.test(text)) return "后续进展";
   if (/更名|管理层|整合|组织架构|业务协同|首席|新任|总裁|董事长|迎新/.test(text)) return "完成后整合";
   if (/换股实施|交割|完成.*合并|实施完成|终止上市|登记完成|交割完成/.test(text)) return "交易实施";
   if (/证监会|注册|核准|经营者集中|市场监管总局|审核通过|并购重组委|交易所审核/.test(text)) return "监管审核";
@@ -58,6 +55,7 @@ function concise(text: string) {
 
 function milestoneKey(item: EvidenceItem, stage: TimelineStage) {
   const text = `${item.title} ${item.summary} ${item.quote}`;
+  if (/(终止筹划|终止本次|终止.*(重组|合并|交易)|项目终止|不再推进|撤回.*(重组|合并|交易))/.test(text) && !/终止上市/.test(text)) return `${stage}|terminated`;
   if (/新任.*总裁|总裁.*敲定|迎新总裁|聘任.*总裁/.test(text)) return `${stage}|management-president`;
   if (/管理层|董事长|总经理|人事/.test(text)) return `${stage}|management`;
   if (/更名|证券简称|公司名称/.test(text)) return `${stage}|rename`;
@@ -67,23 +65,6 @@ function milestoneKey(item: EvidenceItem, stage: TimelineStage) {
   // Do not merge all entries in a calendar month: adjacent disclosures may be
   // distinct milestones. Exact-date entries are the conservative dedupe boundary.
   return `${stage}|${item.disclosedAt}`;
-}
-
-function milestoneTitle(stage: TimelineStage, representative: EvidenceItem) {
-  const text = `${representative.title} ${representative.summary} ${representative.quote}`;
-  if (/新任.*总裁|总裁.*敲定|迎新总裁|聘任.*总裁/.test(text)) return "合并后资管平台敲定新任总裁";
-  if (/更名|证券简称|公司名称/.test(text)) return "合并后主体完成名称及证券简称调整";
-  if (/换股实施|交割|终止上市|实施完成|完成.*合并/.test(text)) return "换股吸收合并进入实施或完成节点";
-  if (/证监会|注册|核准|经营者集中|审核通过|反垄断/.test(text)) {
-    const company = companyFromText(text);
-    const target = entityFromText(text);
-    const regulator = /市场监管总局/.test(text) ? "市场监管总局" : "监管机构";
-    const action = /无条件批准/.test(text) ? "无条件批准" : "批准";
-    return company && target ? `${regulator}${action}${company}收购${target}股权案` : "交易取得监管审核、核准或反垄断审批进展";
-  }
-  if (/预案|重组报告书|董事会|股东大会|股东会/.test(text)) return "交易方案披露并进入公司治理审议程序";
-  if (stage === "筹划与首次披露") return "公司首次披露筹划或推进该项交易";
-  return concise(representative.title);
 }
 
 export function buildTimelineGroups(evidence: EvidenceItem[]): TimelineGroup[] {
@@ -106,7 +87,9 @@ export function buildTimelineGroups(evidence: EvidenceItem[]): TimelineGroup[] {
       id: `stage-${key}`,
       stage,
       dateLabel: first === last ? first : `${first} 至 ${last}`,
-      title: milestoneTitle(stage, representative),
+      // Candidate timelines must never turn keyword matches into a new factual
+      // headline. Keep the visible title traceable to the selected material.
+      title: concise(representative.title),
       summary: concise(representative.summary || representative.quote || representative.title),
       evidenceIds: items.map((item) => item.id),
       sourceCount: new Set(items.map((item) => item.sourceUrl || `${item.publisher}:${item.title}`)).size,

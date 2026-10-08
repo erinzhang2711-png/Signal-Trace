@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildTimelineGroups, canonicalEventName } from "./timeline";
+import { buildTimelineGroups, canonicalEventName, timelineStage } from "./timeline";
 import type { EvidenceItem } from "./types";
 
 const item = (id: string, date: string, title: string, summary = title): EvidenceItem => ({
@@ -30,7 +30,7 @@ describe("event lifecycle timeline", () => {
     ]);
     expect(groups).toHaveLength(4);
     expect(groups[0]).toMatchObject({ stage: "筹划与首次披露", sourceCount: 1 });
-    expect(groups[3]).toMatchObject({ stage: "完成后整合", sourceCount: 2, title: "合并后资管平台敲定新任总裁" });
+    expect(groups[3]).toMatchObject({ stage: "完成后整合", sourceCount: 2, title: "国泰海通资管新任总裁敲定" });
   });
 
   it("retains every evidence id in a grouped stage so the UI can show every source", () => {
@@ -40,5 +40,11 @@ describe("event lifecycle timeline", () => {
     ]);
     expect(groups).toHaveLength(1);
     expect(groups[0]).toMatchObject({ sourceCount: 2, evidenceIds: ["official", "coverage"] });
+  });
+
+  it("does not describe a terminated transaction as completed", () => {
+    const terminated = item("terminated", "2025-12-12", "海光信息吸收合并中科曙光项目终止为鉴");
+    expect(timelineStage(terminated)).toBe("后续进展");
+    expect(buildTimelineGroups([terminated])[0]).toMatchObject({ title: "海光信息吸收合并中科曙光项目终止为鉴" });
   });
 });
