@@ -14,15 +14,16 @@ describe("event lifecycle timeline", () => {
       .toBe("国泰君安与海通证券换股吸收合并");
   });
 
-  it("merges duplicate coverage in one stage and keeps later lifecycle stages", () => {
+  it("keeps distinct disclosures while grouping a concrete management milestone", () => {
     const groups = buildTimelineGroups([
       item("a", "2024-09-05", "国泰君安筹划吸收合并海通证券"),
       item("b", "2024-09-06", "媒体报道国泰君安筹划吸收合并海通证券"),
       item("c", "2025-03-14", "换股实施完成，海通证券终止上市"),
-      item("d", "2025-06-12", "国泰海通管理层完成整合"),
+      item("d", "2025-06-12", "国泰海通资管新任总裁敲定"),
+      item("e", "2025-06-13", "国泰海通资管迎新总裁"),
     ]);
-    expect(groups).toHaveLength(3);
-    expect(groups[0]).toMatchObject({ stage: "筹划与首次披露", sourceCount: 2 });
-    expect(groups[2]).toMatchObject({ stage: "完成后整合" });
+    expect(groups).toHaveLength(4);
+    expect(groups[0]).toMatchObject({ stage: "筹划与首次披露", sourceCount: 1 });
+    expect(groups[3]).toMatchObject({ stage: "完成后整合", sourceCount: 2, summary: "合并后资管平台敲定新任总裁，进入管理层整合阶段。" });
   });
 });

@@ -27,7 +27,7 @@ export function canonicalEventName(task: ResearchTask) {
 
 export function timelineStage(item: EvidenceItem): TimelineStage {
   const text = `${item.title} ${item.summary} ${item.quote}`;
-  if (/更名|管理层|整合|组织架构|业务协同|首席|新任/.test(text)) return "完成后整合";
+  if (/更名|管理层|整合|组织架构|业务协同|首席|新任|总裁|董事长|迎新/.test(text)) return "完成后整合";
   if (/换股实施|交割|完成.*合并|实施完成|终止上市|登记完成|交割完成/.test(text)) return "交易实施";
   if (/证监会|注册|核准|经营者集中|市场监管总局|审核通过|并购重组委|交易所审核/.test(text)) return "监管审核";
   if (/预案|重组报告书|董事会|股东大会|股东会|审议通过|草案/.test(text)) return "方案审议";
@@ -41,13 +41,35 @@ function concise(text: string) {
   return sentence.length > 94 ? `${sentence.slice(0, 93)}…` : sentence;
 }
 
+function milestoneKey(item: EvidenceItem, stage: TimelineStage) {
+  const text = `${item.title} ${item.summary} ${item.quote}`;
+  if (/新任.*总裁|总裁.*敲定|迎新总裁|聘任.*总裁/.test(text)) return `${stage}|management-president`;
+  if (/管理层|董事长|总经理|人事/.test(text)) return `${stage}|management`;
+  if (/更名|证券简称|公司名称/.test(text)) return `${stage}|rename`;
+  if (/换股实施|交割|终止上市|实施完成|完成.*合并/.test(text)) return `${stage}|completion`;
+  if (/证监会|注册|核准|经营者集中|审核通过/.test(text)) return `${stage}|approval`;
+  if (/预案|重组报告书|董事会|股东大会|股东会/.test(text)) return `${stage}|proposal`;
+  // Do not merge all entries in a calendar month: adjacent disclosures may be
+  // distinct milestones. Exact-date entries are the conservative dedupe boundary.
+  return `${stage}|${item.disclosedAt}`;
+}
+
+function milestoneSummary(stage: TimelineStage, representative: EvidenceItem) {
+  const text = `${representative.title} ${representative.summary} ${representative.quote}`;
+  if (/新任.*总裁|总裁.*敲定|迎新总裁|聘任.*总裁/.test(text)) return "合并后资管平台敲定新任总裁，进入管理层整合阶段。";
+  if (/更名|证券简称|公司名称/.test(text)) return "合并后主体完成名称或证券简称调整。";
+  if (/换股实施|交割|终止上市|实施完成|完成.*合并/.test(text)) return "换股吸收合并进入实施或完成节点。";
+  if (/证监会|注册|核准|经营者集中|审核通过/.test(text)) return "交易取得监管审核、核准或反垄断审批进展。";
+  if (/预案|重组报告书|董事会|股东大会|股东会/.test(text)) return "交易方案已披露，或进入公司治理审议程序。";
+  if (stage === "筹划与首次披露") return "公司首次披露筹划或推进该项交易。";
+  return concise(representative.summary || representative.quote || representative.title);
+}
+
 export function buildTimelineGroups(evidence: EvidenceItem[]): TimelineGroup[] {
   const grouped = new Map<string, EvidenceItem[]>();
   for (const item of [...evidence].sort((left, right) => left.disclosedAt.localeCompare(right.disclosedAt))) {
     const stage = timelineStage(item);
-    // Same stage in the same calendar month is usually duplicate coverage of one milestone;
-    // retaining different months preserves the event's lifecycle evolution.
-    const key = `${stage}|${item.disclosedAt.slice(0, 7)}`;
+    const key = milestoneKey(item, stage);
     grouped.set(key, [...(grouped.get(key) ?? []), item]);
   }
   return [...grouped.entries()].map(([key, items]) => {
@@ -63,7 +85,7 @@ export function buildTimelineGroups(evidence: EvidenceItem[]): TimelineGroup[] {
       id: `stage-${key}`,
       stage,
       dateLabel: first === last ? first : `${first} 至 ${last}`,
-      summary: concise(representative.summary || representative.quote || representative.title),
+      summary: milestoneSummary(stage, representative),
       evidenceIds: items.map((item) => item.id),
       sourceCount: new Set(items.map((item) => item.sourceUrl || `${item.publisher}:${item.title}`)).size,
       representativeEvidenceId: representative.id,

@@ -167,10 +167,20 @@ function companyTerms(task: ResearchTask) {
   return [...new Set(task.companyQuery.match(/[\u4e00-\u9fa5]{2,}|\d{6}|[A-Za-z]{2,}/g) ?? [])];
 }
 
-function isRelevant(task: ResearchTask, text: string) {
+function isRelevant(task: ResearchTask, text: string, title = "") {
   const companies = companyTerms(task);
   const events = relevanceTerms(task);
-  return companies.some((term) => text.includes(term)) && (events.length === 0 || events.some((term) => text.includes(term)));
+  const broadlyRelevant = companies.some((term) => text.includes(term)) && (events.length === 0 || events.some((term) => text.includes(term)));
+  if (!broadlyRelevant) return false;
+  // For a merger, a generic financing or periodic filing can repeat the merger in
+  // its background section without being a lifecycle milestone. Keep only records
+  // whose headline itself signals the transaction or a direct post-merger outcome.
+  if (/换股|吸收合并|合并|重组/.test(task.eventQuery)) {
+    const hasLifecycleHeadline = /换股|吸收合并|合并|重组|整合|更名|新任|管理层|总裁|董事长|交割|审核|审议|预案|停牌/.test(title);
+    if (!hasLifecycleHeadline) return false;
+    if (/债券|募集说明书|注册稿|年度报告|季度报告/.test(title) && !/换股|吸收合并|合并|重组/.test(title)) return false;
+  }
+  return true;
 }
 
 function toolLabel(tool: AgentToolName) {
@@ -216,7 +226,7 @@ export function extractMcpEvidence(output: string, tool: AgentToolName, task: Re
     const disclosedAt = normalizeDate(recordValue(record, DATE_KEYS));
     const body = recordValue(record, BODY_KEYS);
     const combined = `${title}\n${body}`;
-    if (!title || !disclosedAt || disclosedAt > task.cutoffDate || !isRelevant(task, combined)) return [];
+    if (!title || !disclosedAt || disclosedAt > task.cutoffDate || !isRelevant(task, combined, title)) return [];
 
     const candidateUrl = recordValue(record, URL_KEYS);
     const sourceUrl = isHttpsUrl(candidateUrl) ? candidateUrl : "";
