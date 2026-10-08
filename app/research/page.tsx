@@ -132,6 +132,9 @@ function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: Research
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [following, setFollowing] = useState(false);
   const [reviewing, setReviewing] = useState(false);
+  const [batchSelection, setBatchSelection] = useState<Set<string>>(new Set());
+  const [batchReviewing, setBatchReviewing] = useState(false);
+  const [batchReviewNote, setBatchReviewNote] = useState<string | null>(null);
   const [selectedMarketSeries, setSelectedMarketSeries] = useState<MarketSeries | undefined>();
   const [marketLoading, setMarketLoading] = useState(false);
   const eventName = run.eventName || canonicalEventName(task, evidence);
@@ -150,6 +153,39 @@ function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: Research
       ? [{ id: followId, eventName, task, securities, followedAt: new Date().toISOString() } satisfies FollowedEvent, ...current.filter((item) => item.id !== followId)]
       : current.filter((item) => item.id !== followId);
     window.localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(updated));
+  }
+
+  function toggleBatchSelection(id: string) {
+    setBatchSelection((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  async function batchVerify() {
+    const items = evidence.filter((item) => batchSelection.has(item.id));
+    if (items.length === 0 || batchReviewing) return;
+    setBatchReviewing(true);
+    setBatchReviewNote(null);
+    const verified = await Promise.all(items.map(async (item) => {
+      try {
+        const response = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: item.title, publisher: item.publisher, sourceUrl: item.sourceUrl, disclosedAt: item.disclosedAt, body: item.quote || item.summary, task }) });
+        const data = (await response.json()) as { proposal?: AgentProposal };
+        if (!response.ok || !data.proposal) return { id: item.id, outcome: "待人工核验" as const };
+        const state = nextState("待人工核验", data.proposal, { title: item.title, publisher: item.publisher, sourceUrl: item.sourceUrl, disclosedAt: item.disclosedAt, body: item.quote || item.summary });
+        return { id: item.id, outcome: state === "待人工核验" ? "待人工核验" as const : "支持当前结论" as const };
+      } catch {
+        return { id: item.id, outcome: "待人工核验" as const };
+      }
+    }));
+    const outcomeById = new Map(verified.map((item) => [item.id, item.outcome]));
+    const nextEvidence = evidence.map((item) => outcomeById.has(item.id) ? { ...item, reviewOutcome: outcomeById.get(item.id) } : item);
+    onRunChange({ ...run, evidence: nextEvidence, timelineGroups: buildTimelineGroups(nextEvidence) });
+    const supported = verified.filter((item) => item.outcome === "支持当前结论").length;
+    setBatchReviewNote(`已完成 ${verified.length} 条独立核验：${supported} 条来源与事实条件通过，${verified.length - supported} 条仍需人工核验；未自动改变正式事件状态。`);
+    setBatchSelection(new Set());
+    setBatchReviewing(false);
   }
 
   const selected = evidence.find((item) => item.id === selectedId) ?? evidence[0];
@@ -190,7 +226,13 @@ function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: Research
         <SelectedMarketReaction series={selectedMarketSeries} selected={selected} loading={marketLoading} />
         <article className="panel version-card"><div className="panel-heading"><span>结论演化</span><small>1 个版本</small></div><ol className="versions"><li><i className={stateTone[state]} /><div><b>{state}</b><span>{task.cutoffDate}</span><p>{run.stopReason}</p></div></li></ol></article>
       </aside>
-      <section className="center-column panel"><div className="timeline-header"><div><div className="panel-label">{canBuildTimeline ? "证据时间线" : "候选研究时间线"}</div><h2>按事件阶段归并，而不是堆叠原始文章</h2></div><span>{timelineGroups.length} 个阶段 · {evidence.length} 条材料</span></div><div className="legend"><span><i className="dot official" />交易所/公司公告</span><span><i className="dot ir" />投资者关系</span><span><i className="dot user" />媒体 / 待归并</span></div><div className="timeline">{timelineGroups.length ? timelineGroups.map((group) => { const representative = evidence.find((item) => item.id === group.representativeEvidenceId); return <button className={`timeline-item ${selected?.id === group.representativeEvidenceId ? "selected" : ""}`} key={group.id} onClick={() => { setSelectedId(group.representativeEvidenceId); setReviewing(false); }}><div className="date"><b>{group.dateLabel}</b><span>{group.sourceCount} 个来源</span></div><i className={`line-dot ${representative?.sourceTier === "交易所/公司公告" ? "official" : representative?.sourceTier === "公司投资者关系" ? "ir" : "user"}`} /><div className="timeline-copy"><div><span className="kind-tag">{timelineStageLabel(group.stage)}</span>{!canBuildTimeline && <span className="review-mini">待核验</span>}</div><h3>{group.title}</h3><p>{group.summary}</p><small>点击查看代表材料、原文与当日市场反应</small></div></button>; }) : <div className="timeline-empty">本次没有提取出同时匹配公司与事件关键词的材料。请补充公司代码、交易对手或更具体的事件名称后重新运行。</div>}</div></section>
+      <section className="center-column panel">
+        <div className="timeline-header"><div><div className="panel-label">{canBuildTimeline ? "证据时间线" : "候选研究时间线"}</div><h2>事件生命周期</h2><p className="timeline-guide">左侧看状态与节点行情；中间按阶段阅读具体进展；右侧核对选中材料与运行记录。</p></div><span>{timelineGroups.length} 个阶段 · {evidence.length} 条材料</span></div>
+        <div className="timeline-toolbar"><span>勾选多个候选节点后，可一次生成独立核验结论。</span><button className="batch-review-button" disabled={batchSelection.size === 0 || batchReviewing} onClick={() => void batchVerify()}>{batchReviewing ? "正在核验…" : `批量核验${batchSelection.size ? `（${batchSelection.size}）` : ""}`}</button></div>
+        {batchReviewNote && <div className="batch-review-note">{batchReviewNote}</div>}
+        <div className="legend"><span><i className="dot official" />交易所/公司公告</span><span><i className="dot ir" />投资者关系</span><span><i className="dot user" />媒体 / 待归并</span></div>
+        <div className="timeline">{timelineGroups.length ? timelineGroups.map((group) => { const representative = evidence.find((item) => item.id === group.representativeEvidenceId); if (!representative) return null; return <div className={`timeline-row ${selected?.id === representative.id ? "selected" : ""}`} key={group.id}><label className="timeline-select"><input type="checkbox" checked={batchSelection.has(representative.id)} onChange={() => toggleBatchSelection(representative.id)} aria-label={`选择 ${group.title} 进行批量核验`} /></label><button className="timeline-item" onClick={() => { setSelectedId(representative.id); setReviewing(false); }}><div className="date"><b>{group.dateLabel}</b><span>{group.sourceCount} 个来源</span></div><i className={`line-dot ${representative.sourceTier === "交易所/公司公告" ? "official" : representative.sourceTier === "公司投资者关系" ? "ir" : "user"}`} /><div className="timeline-copy"><div><span className="kind-tag">{timelineStageLabel(group.stage)}</span>{representative.reviewOutcome && <span className="review-mini">{representative.reviewOutcome}</span>}</div><h3>{group.title}</h3><p>{group.summary}</p><small>点击查看原文与当日市场窗口</small></div></button></div>; }) : <div className="timeline-empty">本次没有提取出同时匹配公司与事件关键词的材料。请补充公司代码、交易对手或更具体的事件名称后重新运行。</div>}</div>
+      </section>
       <aside className="right-column">
         <article className="panel evidence-card"><div className="panel-heading"><span>{canBuildTimeline ? "证据详情" : "候选详情"}</span><span className={`source-tag ${selected?.sourceTier === "交易所/公司公告" ? "official" : "user"}`}>{selected?.sourceTier ?? "待核验"}</span></div>{selected ? <><h3>{selected.title}</h3>{selected.quote && <blockquote>“{selected.quote}”</blockquote>}<p>{selected.impact}</p><dl><div><dt>披露 / 抓取</dt><dd>{selected.disclosedAt}</dd></div><div><dt>来源</dt><dd>{selected.publisher}</dd></div></dl><small className="source-reference">{selected.sourceLabel}</small>{selected.sourceUrl ? <a href={selected.sourceUrl} target="_blank" rel="noreferrer">打开原文 ↗</a> : <span className="fine-print">暂无直达原文，保留为候选材料。</span>}{!canBuildTimeline && <button className="review-trigger" onClick={() => setReviewing((value) => !value)}>{reviewing ? "收起核验表单" : "核验此候选 →"}</button>}</> : <p className="fine-print">选择时间线节点后查看材料详情。</p>}</article>
         {reviewing && selected && <CandidateReviewPanel task={task} run={run} selected={selected} onRunChange={onRunChange} onClose={() => setReviewing(false)} />}

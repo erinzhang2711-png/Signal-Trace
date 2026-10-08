@@ -149,6 +149,12 @@ export default function Home() {
     setNotice(null);
   }
 
+  function removeFollowedEvent(id: string) {
+    const updated = followedEvents.filter((event) => event.id !== id);
+    setFollowedEvents(updated);
+    window.localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(updated));
+  }
+
   function acceptProposal() {
     if (!proposal) return;
     const state = nextState(current.state, proposal, material);
@@ -213,7 +219,7 @@ export default function Home() {
             {error && <div className="error-box">{error}</div>}
             <button className="primary-button research-button" onClick={startResearch} disabled={monitoring}>{monitoring ? "Agent 正在检索证据…" : "让 Agent 开始研究 →"}</button>
           </div>
-          {followedEvents.length > 0 && <section className="followed-events panel"><div className="panel-heading"><span>已关注事件</span><small>此浏览器本地保存</small></div><p className="fine-print">从这里重新打开已关注的研究；当前版本不在后台自动抓取新公告。</p><div className="followed-event-list">{followedEvents.map((event) => <button key={event.id} onClick={() => { const params = new URLSearchParams({ company: event.task.companyQuery, event: event.task.eventQuery, cutoff: event.task.cutoffDate }); router.push(`/research?${params.toString()}`); }}><b>{event.eventName}</b><span>{event.securities.map((security) => `${security.name}${security.code ? ` ${security.code}` : ""}`).join(" · ")} · 截至 {event.task.cutoffDate}</span></button>)}</div></section>}
+          {followedEvents.length > 0 && <section className="followed-events panel"><div className="panel-heading"><span>已关注事件</span><small>此浏览器本地保存</small></div><p className="fine-print">从这里重新打开已关注的研究；当前版本不在后台自动抓取新公告。</p><div className="followed-event-list">{followedEvents.map((event) => <div className="followed-event-row" key={event.id}><button onClick={() => { const params = new URLSearchParams({ company: event.task.companyQuery, event: event.task.eventQuery, cutoff: event.task.cutoffDate }); router.push(`/research?${params.toString()}`); }}><b>{event.eventName}</b><span>{event.securities.map((security) => `${security.name}${security.code ? ` ${security.code}` : ""}`).join(" · ")} · 截至 {event.task.cutoffDate}</span></button><button className="unfollow-button" aria-label={`取消关注 ${event.eventName}`} onClick={() => removeFollowedEvent(event.id)}>取消关注</button></div>)}</div></section>}
           <button className="case-link" onClick={() => setMode("demo")}>查看「海光信息 × 中科曙光」完整案例演示 →</button>
         </section>
       </main>
