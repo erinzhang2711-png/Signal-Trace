@@ -112,13 +112,27 @@ function sourceTier(publisher: string, sourceUrl: string): SourceTier {
 
 function parsedDocuments(output: string): unknown[] {
   const candidates = [output, ...Array.from(output.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi), (match) => match[1])];
-  return candidates.flatMap((candidate) => {
+  const documents: unknown[] = [];
+  const seen = new Set<string>();
+  while (candidates.length > 0) {
+    const candidate = candidates.shift();
+    if (!candidate || seen.has(candidate)) continue;
+    seen.add(candidate);
     try {
-      return [JSON.parse(candidate) as unknown];
+      const document = JSON.parse(candidate) as unknown;
+      documents.push(document);
+      // iFinD commonly returns JSON in data.data as an escaped JSON string.
+      // Parse only strings that look like a serialized object or array.
+      const serialized = textValues(document).filter((value) => {
+        const trimmed = value.trim();
+        return (trimmed.startsWith("{") || trimmed.startsWith("[")) && (trimmed.endsWith("}") || trimmed.endsWith("]"));
+      });
+      candidates.push(...serialized);
     } catch {
-      return [];
+      // Non-JSON strings are handled by the raw-text fallback when needed.
     }
-  });
+  }
+  return documents;
 }
 
 function nestedRecords(value: unknown, records: UnknownRecord[] = []): UnknownRecord[] {

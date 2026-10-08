@@ -95,6 +95,28 @@ describe("MCP candidate evidence extraction", () => {
     });
   });
 
+  it("unwraps iFinD's nested JSON news payload before extracting candidates", () => {
+    const inner = JSON.stringify([{
+      "资讯标题": "宁德时代收购吉利系85亿电池项目！",
+      "资讯内容": "宁德时代收购重庆耀宁新能源科技有限公司股权案获得无条件批准。",
+      "日期": "2026-09-15",
+      "URL": "https://example.com/ningde-yaoning",
+    }]);
+    const output = JSON.stringify({ code: 1, data: { data: inner } });
+    const evidence = extractMcpEvidence(output, "search_related_news", {
+      companyQuery: "宁德时代",
+      eventQuery: "收购耀宁",
+      cutoffDate: "2026-10-08",
+    }, "2026-10-08T00:00:00.000Z");
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]).toMatchObject({
+      title: "宁德时代收购吉利系85亿电池项目！",
+      sourceUrl: "https://example.com/ningde-yaoning",
+      disclosedAt: "2026-09-15",
+    });
+  });
+
   it("matches a company name when the user also supplies its stock code", () => {
     const output = JSON.stringify({ data: [{
       title: "宁德时代收购耀宁新能源资产",
