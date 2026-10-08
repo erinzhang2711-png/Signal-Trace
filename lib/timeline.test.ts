@@ -14,6 +14,12 @@ describe("event lifecycle timeline", () => {
       .toBe("国泰君安与海通证券换股吸收合并");
   });
 
+  it("expands an acquisition keyword using the evidence-grounded target entity", () => {
+    expect(canonicalEventName({ companyQuery: "宁德时代 300750", eventQuery: "收购耀宁", cutoffDate: "2026-10-08" }, [
+      item("a", "2026-09-12", "宁德时代收购重庆耀宁新能源科技有限公司股权案获批"),
+    ])).toBe("宁德时代收购重庆耀宁新能源科技有限公司股权案");
+  });
+
   it("keeps distinct disclosures while grouping a concrete management milestone", () => {
     const groups = buildTimelineGroups([
       item("a", "2024-09-05", "国泰君安筹划吸收合并海通证券"),
@@ -24,6 +30,6 @@ describe("event lifecycle timeline", () => {
     ]);
     expect(groups).toHaveLength(4);
     expect(groups[0]).toMatchObject({ stage: "筹划与首次披露", sourceCount: 1 });
-    expect(groups[3]).toMatchObject({ stage: "完成后整合", sourceCount: 2, summary: "合并后资管平台敲定新任总裁，进入管理层整合阶段。" });
+    expect(groups[3]).toMatchObject({ stage: "完成后整合", sourceCount: 2, title: "合并后资管平台敲定新任总裁" });
   });
 });

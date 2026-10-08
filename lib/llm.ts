@@ -8,15 +8,6 @@ export type LLMRuntime = {
 };
 
 export function getLLMRuntime(): LLMRuntime | null {
-  if (process.env.OPENAI_API_KEY) {
-    return {
-      client: new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
-      model: process.env.OPENAI_MODEL || "gpt-5-mini",
-      api: "responses",
-      provider: "openai",
-    };
-  }
-
   if (process.env.ZHIPU_API_KEY) {
     return {
       client: new OpenAI({
@@ -26,6 +17,15 @@ export function getLLMRuntime(): LLMRuntime | null {
       model: process.env.ZHIPU_MODEL || "glm-4-flash",
       api: "chat",
       provider: "zhipu",
+    };
+  }
+
+  if (process.env.OPENAI_API_KEY) {
+    return {
+      client: new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+      model: process.env.OPENAI_MODEL || "gpt-5-mini",
+      api: "responses",
+      provider: "openai",
     };
   }
 

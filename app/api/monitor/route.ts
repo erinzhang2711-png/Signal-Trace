@@ -4,9 +4,9 @@ import { z } from "zod";
 
 import { AGENT_TOOL_NAMES, runIFindTool } from "@/lib/ifind";
 import { sourceTierFromPublisher } from "@/lib/evidence";
-import { getLLMRuntime } from "@/lib/llm";
+import { getLLMRuntime, type LLMRuntime } from "@/lib/llm";
 import { buildTimelineGroups, canonicalEventName } from "@/lib/timeline";
-import type { AgentProposal, AgentRun, AgentToolName, EvidenceItem, MarketSeries, ResearchTask } from "@/lib/types";
+import type { AgentProposal, AgentRun, AgentToolName, EvidenceItem, MarketSeries, ResearchTask, TimelineGroup } from "@/lib/types";
 
 const inputSchema = z.object({
   currentState: z.enum(["筹划中", "预案披露", "持续推进", "待人工核验", "已否认", "已完成"]),
@@ -248,7 +248,9 @@ export async function POST(request: Request) {
     };
     const decision = result.decision as string;
     const status: AgentRun["status"] = modelEvidence.length === 0 || decision === "待人工核验" || proposal.requiresReview ? "待人工核验" : decision === "无状态变化" ? "无状态变化" : "待用户确认";
-    const run: AgentRun = { id: `run-${Date.now()}`, status, startedAt, endedAt: new Date().toISOString(), stopReason: extractedEvidence.length === 0 ? "未提取到可构建同一事件时间线的证据节点。" : modelEvidence.length === 0 ? "已展示代码提取的候选时间线；等待 Agent 归并与人工核验。" : (result.stopReason as string) || "已完成有限工具调用。", toolCalls: traces, proposal, evidence: extractedEvidence, marketSeries, eventName: canonicalEventName(payload.data.task), timelineGroups: buildTimelineGroups(extractedEvidence) };
+    const defaultGroups = buildTimelineGroups(extractedEvidence);
+    const narrative = await summarizeTimelineWithLLM(runtime, payload.data.task, extractedEvidence, defaultGroups);
+    const run: AgentRun = { id: `run-${Date.now()}`, status, startedAt, endedAt: new Date().toISOString(), stopReason: extractedEvidence.length === 0 ? "未提取到可构建同一事件时间线的证据节点。" : modelEvidence.length === 0 ? "已展示代码提取的候选时间线；等待 Agent 归并与人工核验。" : (result.stopReason as string) || "已完成有限工具调用。", toolCalls: traces, proposal, evidence: extractedEvidence, marketSeries, eventName: narrative?.eventName || canonicalEventName(payload.data.task, extractedEvidence), timelineGroups: narrative?.groups || defaultGroups };
     return NextResponse.json({ run });
   } catch (error) {
     const run = failedRun(startedAt, traces, monitorFailureReason(runtime, traces.length, error));
@@ -297,6 +299,51 @@ function mergeEvidence(modelEvidence: EvidenceItem[], mcpEvidence: EvidenceItem[
     merged.set(key, item);
   }
   return [...merged.values()].sort((left, right) => left.disclosedAt.localeCompare(right.disclosedAt)).slice(0, 30);
+}
+
+type TimelineNarrative = { eventName: string; groups: TimelineGroup[] };
+
+async function summarizeTimelineWithLLM(runtime: LLMRuntime, task: ResearchTask, evidence: EvidenceItem[], groups: TimelineGroup[]): Promise<TimelineNarrative | null> {
+  if (evidence.length === 0 || groups.length === 0) return null;
+  const sourceById = new Map(evidence.map((item) => [item.id, item]));
+  const input = groups.map((group) => ({
+    id: group.id,
+    date: group.dateLabel,
+    stage: group.stage,
+    fallbackTitle: group.title,
+    materials: group.evidenceIds.map((id) => {
+      const item = sourceById.get(id);
+      return item ? { title: item.title, summary: item.summary, quote: item.quote, publisher: item.publisher } : null;
+    }).filter(Boolean),
+  }));
+  try {
+    const completion = await runtime.client.chat.completions.create({
+      model: runtime.model,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: "你是金融事件研究的证据归并助手。只能改写用户给出的材料，不能补写交易金额、主体、日期、审批结果或预测。输出中文 JSON：eventName 为 8-45 字、可识别交易各方及事项的完整事件名；milestones 为数组，每项有 id、title、summary。title 是该阶段的具体事件（不重复 stage 标签，12-38 字）；summary 是来源材料的中性压缩概括（25-90 字）。若材料不足，用保守表述如‘披露显示交易取得审批进展’，不要猜测。" },
+        { role: "user", content: JSON.stringify({ task, stages: input }) },
+      ],
+    });
+    const content = completion.choices[0]?.message.content;
+    if (!content) return null;
+    const parsed = JSON.parse(content) as { eventName?: unknown; milestones?: unknown };
+    if (typeof parsed.eventName !== "string" || parsed.eventName.trim().length < 4 || parsed.eventName.length > 60 || !Array.isArray(parsed.milestones)) return null;
+    const replacements = new Map(parsed.milestones.flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const value = item as Record<string, unknown>;
+      if (typeof value.id !== "string" || typeof value.title !== "string" || typeof value.summary !== "string") return [];
+      if (!groups.some((group) => group.id === value.id) || value.title.length < 4 || value.title.length > 80 || value.summary.length < 8 || value.summary.length > 180) return [];
+      return [[value.id, { title: value.title.trim(), summary: value.summary.trim() }] as const];
+    }));
+    return {
+      eventName: parsed.eventName.trim(),
+      groups: groups.map((group) => ({ ...group, ...(replacements.get(group.id) ?? {}) })),
+    };
+  } catch {
+    // The deterministic, evidence-grounded labels remain available if synthesis fails.
+    return null;
+  }
 }
 
 function failedRun(startedAt: string, traces: AgentRun["toolCalls"], stopReason: string): AgentRun {

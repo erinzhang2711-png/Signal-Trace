@@ -106,6 +106,7 @@ export type TimelineGroup = {
   id: string;
   stage: TimelineStage;
   dateLabel: string;
+  title: string;
   summary: string;
   evidenceIds: string[];
   sourceCount: number;
