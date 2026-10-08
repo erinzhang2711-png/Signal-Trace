@@ -7,13 +7,34 @@ export const SOURCE_RANK: Record<SourceTier, number> = {
   "用户导入": 1,
 };
 
-export function sourceTierFromPublisher(publisher: string, sourceUrl: string): SourceTier {
-  const value = `${publisher} ${sourceUrl}`.toLowerCase();
-  if (value.includes("sse.com") || value.includes("cninfo") || value.includes("公告") || value.includes("证券交易所")) {
-    return "交易所/公司公告";
+function sourceHost(sourceUrl: string) {
+  try {
+    const url = new URL(sourceUrl);
+    return url.protocol === "https:" ? url.hostname.toLowerCase() : "";
+  } catch {
+    return "";
   }
-  if (value.includes("investor") || value.includes("投资者") || value.includes("ir")) return "公司投资者关系";
-  if (sourceUrl.startsWith("http")) return "媒体报道";
+}
+
+function isExchangeHost(host: string) {
+  return host === "sse.com.cn" || host.endsWith(".sse.com.cn") || host === "cninfo.com.cn" || host.endsWith(".cninfo.com.cn") || host === "szse.cn" || host.endsWith(".szse.cn");
+}
+
+function isInvestorRelationsUrl(sourceUrl: string, host: string) {
+  try {
+    const path = new URL(sourceUrl).pathname.toLowerCase();
+    return host.startsWith("ir.") || host.includes("investor") || path.includes("/investor") || path.includes("/ir/");
+  } catch {
+    return false;
+  }
+}
+
+export function sourceTierFromPublisher(publisher: string, sourceUrl: string): SourceTier {
+  const host = sourceHost(sourceUrl);
+  if (!host) return "用户导入";
+  if (isExchangeHost(host)) return "交易所/公司公告";
+  if (isInvestorRelationsUrl(sourceUrl, host)) return "公司投资者关系";
+  if (publisher.trim()) return "媒体报道";
   return "用户导入";
 }
 
@@ -29,9 +50,11 @@ export function hasMinimumEvidence(material: ImportedMaterial, proposal: AgentPr
 
 export function nextState(current: EventState, proposal: AgentProposal, material: ImportedMaterial): EventState {
   const tier = sourceTierFromPublisher(material.publisher, material.sourceUrl);
-  if (!hasMinimumEvidence(material, proposal) || proposal.eventMatch === "无法确认") return "待人工核验";
-  if (proposal.contentKind === "传闻" || tier === "用户导入") return "待人工核验";
+  const formalSource = tier === "交易所/公司公告" || tier === "公司投资者关系";
+  if (!hasMinimumEvidence(material, proposal) || proposal.requiresReview || proposal.eventMatch !== "同一事件") return "待人工核验";
+  if (proposal.contentKind !== "事实" || !formalSource) return "待人工核验";
   if (proposal.proposedState === "已否认" && SOURCE_RANK[tier] < SOURCE_RANK["交易所/公司公告"]) return "待人工核验";
+  if (proposal.proposedState === "已完成" && SOURCE_RANK[tier] < SOURCE_RANK["交易所/公司公告"]) return "待人工核验";
   return proposal.proposedState || current;
 }
 

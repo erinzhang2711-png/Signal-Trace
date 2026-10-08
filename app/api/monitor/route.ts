@@ -3,6 +3,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { z } from "zod";
 
 import { AGENT_TOOL_NAMES, runIFindTool } from "@/lib/ifind";
+import { sourceTierFromPublisher } from "@/lib/evidence";
 import { getLLMRuntime } from "@/lib/llm";
 import type { AgentProposal, AgentRun, AgentToolName, EvidenceItem, ResearchTask } from "@/lib/types";
 
@@ -94,13 +95,15 @@ function evidenceFrom(task: ResearchTask, result: Record<string, unknown>): Evid
     if (typeof value.title !== "string" || !value.title.trim()) return [];
     const disclosedAt = typeof value.disclosedAt === "string" ? value.disclosedAt : "";
     if (!isValidEvidenceDate(disclosedAt, task.cutoffDate)) return [];
+    const publisher = typeof value.publisher === "string" && value.publisher ? value.publisher : "iFinD 检索结果";
+    const sourceUrl = isSafeUrl(value.sourceUrl) ? value.sourceUrl : "";
     return [{
       id: `agent-${Date.now()}-${index}`,
       title: value.title,
-      publisher: typeof value.publisher === "string" && value.publisher ? value.publisher : "iFinD 检索结果",
-      sourceUrl: isSafeUrl(value.sourceUrl) ? value.sourceUrl : "",
-      sourceLabel: typeof value.sourceLabel === "string" ? value.sourceLabel : "待补原文链接",
-      sourceTier: value.sourceTier === "交易所/公司公告" || value.sourceTier === "公司投资者关系" || value.sourceTier === "媒体报道" || value.sourceTier === "用户导入" ? value.sourceTier : "媒体报道",
+      publisher,
+      sourceUrl,
+      sourceLabel: sourceUrl && typeof value.sourceLabel === "string" ? value.sourceLabel : "待补原文链接",
+      sourceTier: sourceTierFromPublisher(publisher, sourceUrl),
       contentKind: value.contentKind === "事实" || value.contentKind === "观点" || value.contentKind === "推测" || value.contentKind === "传闻" ? value.contentKind : "事实",
       occurredAt: typeof value.occurredAt === "string" ? value.occurredAt : disclosedAt,
       disclosedAt,
@@ -211,6 +214,7 @@ export async function POST(request: Request) {
 
     const modelEvidence = evidenceFrom(payload.data.task, result);
     const extractedEvidence = mergeEvidence(modelEvidence, mcpEvidence);
+    const hasFormalEvidence = modelEvidence.some((item) => Boolean(item.sourceUrl && item.quote && (item.sourceTier === "交易所/公司公告" || item.sourceTier === "公司投资者关系")));
     const proposal = modelEvidence.length === 0 ? {
       ...proposalFrom(result),
       proposedState: "待人工核验" as const,
@@ -221,31 +225,37 @@ export async function POST(request: Request) {
       rationale: "代码提取只负责保守展示候选材料；未获得模型可追溯的归并结果前，不建立或升级任何正式结论。",
       requiresReview: true,
       suggestedConclusion: extractedEvidence.length === 0 ? "未识别到可建立时间线的同一事件证据；请补充交易对手、标的或事件名称后重试。" : "已展示候选时间线；请打开原文核验并确认是否属于同一事件。",
-    } : proposalFrom(result);
+    } : hasFormalEvidence ? proposalFrom(result) : {
+      ...proposalFrom(result),
+      proposedState: "待人工核验" as const,
+      requiresReview: true,
+      conflict: "Agent 草案未提供带原文短引的正式来源；不能建立或升级正式事件。",
+    };
     const decision = result.decision as string;
     const status: AgentRun["status"] = modelEvidence.length === 0 || decision === "待人工核验" || proposal.requiresReview ? "待人工核验" : decision === "无状态变化" ? "无状态变化" : "待用户确认";
     const run: AgentRun = { id: `run-${Date.now()}`, status, startedAt, endedAt: new Date().toISOString(), stopReason: extractedEvidence.length === 0 ? "未提取到可构建同一事件时间线的证据节点。" : modelEvidence.length === 0 ? "已展示代码提取的候选时间线；等待 Agent 归并与人工核验。" : (result.stopReason as string) || "已完成有限工具调用。", toolCalls: traces, proposal, evidence: extractedEvidence };
     return NextResponse.json({ run });
   } catch (error) {
-    const run = failedRun(startedAt, traces, monitorFailureReason(runtime.api, traces.length, error));
+    const run = failedRun(startedAt, traces, monitorFailureReason(runtime, traces.length, error));
     return NextResponse.json({ run }, { status: 502 });
   }
 }
 
-function monitorFailureReason(api: "responses" | "chat", toolCallCount: number, error: unknown) {
+function monitorFailureReason(runtime: { api: "responses" | "chat"; provider: "openai" | "zhipu" }, toolCallCount: number, error: unknown) {
   const errorText = error instanceof Error ? error.message.toLowerCase() : "";
   const status = errorStatus(error);
 
   if (toolCallCount === 0) {
-    if (status === 429) return "学校模型网关返回 HTTP 429（额度耗尽或请求限流），因此尚未调用 iFinD。请稍后重试，或向学校网关确认额度与速率限制。";
-    if (status === 401 || status === 403) return "学校模型网关返回 HTTP " + status + "（认证或权限失败），因此尚未调用 iFinD。请更新 Vercel Production 的 HKUST_GENAI_API_KEY，或确认该 Key 有权使用目标部署。";
-    if (status === 404) return "学校模型网关返回 HTTP 404（endpoint 或模型部署未找到），因此尚未调用 iFinD。请核对 Vercel Production 的 AZURE_ENDPOINT 与 AZURE_CHAT_DEPLOYMENT。";
-    if (status === 400) return "学校模型网关返回 HTTP 400（请求格式或工具调用不被该部署接受），因此尚未调用 iFinD。请确认学校网关支持 Chat Completions 与 function calling。";
-    if (status && status >= 500) return "学校模型网关返回 HTTP " + status + "（服务端暂时不可用），因此尚未调用 iFinD。请稍后重试。";
-    if (api === "responses") {
-      return "模型服务未完成工具规划，因此尚未调用 iFinD。请检查 Vercel Production 的 OPENAI_API_KEY 和 OPENAI_MODEL；如使用学校网关，请移除 OPENAI_API_KEY，改配 HKUST_GENAI_API_KEY、AZURE_ENDPOINT、AZURE_CHAT_DEPLOYMENT。";
+    const provider = runtime.provider === "zhipu" ? "智谱模型服务" : "OpenAI 模型服务";
+    if (status === 429) return provider + "返回 HTTP 429（额度耗尽或请求限流），因此尚未调用 iFinD。请稍后重试，或检查账户额度与速率限制。";
+    if (status === 401 || status === 403) return provider + "返回 HTTP " + status + "（认证或权限失败），因此尚未调用 iFinD。请检查 Vercel Production 的 API Key。";
+    if (status === 404) return provider + "返回 HTTP 404（模型未开通或模型名称不存在），因此尚未调用 iFinD。请检查模型名称与账户权限。";
+    if (status === 400) return provider + "返回 HTTP 400（请求格式或工具调用不被该模型接受），因此尚未调用 iFinD。请确认当前模型支持 Chat Completions 与 function calling。";
+    if (status && status >= 500) return provider + "返回 HTTP " + status + "（服务端暂时不可用），因此尚未调用 iFinD。请稍后重试。";
+    if (runtime.api === "responses") {
+      return "模型服务未完成工具规划，因此尚未调用 iFinD。请检查 Vercel Production 的 OPENAI_API_KEY 和 OPENAI_MODEL。";
     }
-    return "学校模型网关未完成工具规划，因此尚未调用 iFinD。请检查 Vercel Production 的 HKUST_GENAI_API_KEY、AZURE_ENDPOINT、AZURE_CHAT_DEPLOYMENT 是否齐全且有效。";
+    return "智谱模型服务未完成工具规划，因此尚未调用 iFinD。请检查 Vercel Production 的 ZHIPU_API_KEY 与 ZHIPU_MODEL 是否齐全且有效。";
   }
 
   if (tracesHaveFailures(toolCallCount, errorText)) {

@@ -4,6 +4,7 @@ export type LLMRuntime = {
   client: OpenAI;
   model: string;
   api: "responses" | "chat";
+  provider: "openai" | "zhipu";
 };
 
 export function getLLMRuntime(): LLMRuntime | null {
@@ -12,18 +13,19 @@ export function getLLMRuntime(): LLMRuntime | null {
       client: new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
       model: process.env.OPENAI_MODEL || "gpt-5-mini",
       api: "responses",
+      provider: "openai",
     };
   }
 
-  if (process.env.HKUST_GENAI_API_KEY && process.env.AZURE_ENDPOINT && process.env.AZURE_CHAT_DEPLOYMENT) {
+  if (process.env.ZHIPU_API_KEY) {
     return {
       client: new OpenAI({
-        apiKey: "school-managed-key",
-        baseURL: process.env.AZURE_ENDPOINT,
-        defaultHeaders: { "api-key": process.env.HKUST_GENAI_API_KEY },
+        apiKey: process.env.ZHIPU_API_KEY,
+        baseURL: "https://open.bigmodel.cn/api/paas/v4/",
       }),
-      model: process.env.AZURE_CHAT_DEPLOYMENT,
+      model: process.env.ZHIPU_MODEL || "glm-4-flash",
       api: "chat",
+      provider: "zhipu",
     };
   }
 

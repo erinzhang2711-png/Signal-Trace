@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "check": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --pool=threads --maxWorkers=1"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "^2.3.1",

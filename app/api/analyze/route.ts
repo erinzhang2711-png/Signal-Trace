@@ -63,7 +63,7 @@ export async function POST(request: Request) {
   const runtime = getLLMRuntime();
   if (!runtime) {
     return NextResponse.json(
-      { error: "未配置可用的模型服务。请配置 OPENAI_API_KEY，或学校网关的 HKUST_GENAI_API_KEY、AZURE_ENDPOINT、AZURE_CHAT_DEPLOYMENT。" },
+      { error: "未配置可用的模型服务。请配置 OPENAI_API_KEY，或智谱的 ZHIPU_API_KEY。" },
       { status: 503 },
     );
   }

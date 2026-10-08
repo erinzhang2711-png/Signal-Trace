@@ -21,6 +21,25 @@
 
 停止条件：无新事实则输出“无状态变化”；来源不足/冲突则转“待人工核验”；工具失败或未调用证据工具则失败退出；达到 4 次调用后停止继续检索。
 
+## Agent 状态机与决策边界
+
+这是一个受约束的单 Agent 循环：模型只能从四个业务工具中选择下一步，服务端才真正执行 MCP 调用并回传结果。模型不可读取凭证、不可写入版本、不可自行提高来源等级。
+
+```text
+研究任务 → 选择一个未调用的工具 → 服务端执行并记录轨迹 → 模型决定继续或输出草案
+                                      ↑                         │
+                                      └──── 最多 4 次，禁止重复 ──┘
+
+草案 → 规则层裁决 → 待人工核验 / 无状态变化 / 待用户确认 → 用户确认 → 正式事件版本
+```
+
+模型需要判断：材料是否属于同一事件、属于事实/观点/推测/传闻、是否存在足以改变状态的新事实、是否冲突、以及是否要求人工复核。规则层会额外强制以下条件：
+
+- 没有可直达 HTTPS 原文、不是“同一事件”、不是事实材料、或 `requiresReview=true`：一律停留在待人工核验；
+- 媒体报道只能提供候选线索，不能独立建立正式事件；
+- “已完成”与“已否认”只能由交易所/公司公告支持；
+- 没有执行任何证据工具、工具调用失败、或达到调用上限后仍无可靠结论：停止，不生成正式结论。
+
 ## 设计原则
 
 - **证据优先**：每条结论附带发生、披露、抓取、更新时间、原文短引与来源等级。
@@ -42,7 +61,7 @@
 ```bash
 npm install
 cp .env.local.example .env.local
-# 在 .env.local 填入 OpenAI 与 iFinD 凭证；不要提交该文件
+# 在 .env.local 填入 OpenAI 或智谱，以及 iFinD 凭证；不要提交该文件
 npm run dev
 ```
 
@@ -56,9 +75,8 @@ npm run dev
 | --- | --- | --- |
 | `OPENAI_API_KEY` | OpenAI 路径需要 | 仅由服务端 Route Handler 使用 |
 | `OPENAI_MODEL` | 否 | 默认为 `gpt-5-mini`，需支持 Structured Outputs |
-| `HKUST_GENAI_API_KEY` | 学校网关路径需要 | 学校网关 Key |
-| `AZURE_ENDPOINT` | 学校网关路径需要 | 学校提供的 OpenAI 兼容 endpoint |
-| `AZURE_CHAT_DEPLOYMENT` | 学校网关路径需要 | 学校提供的 Chat deployment 名称 |
+| `ZHIPU_API_KEY` | 智谱路径需要 | 智谱 API Key，仅由服务端 Route Handler 使用 |
+| `ZHIPU_MODEL` | 否 | 默认为 `glm-4-flash`；请使用账户已开通、支持 Chat Completions、工具调用与 JSON 输出的模型 |
 | `IFIND_MCP_TOKEN` | 是（iFinD 监测） | 仅由服务端 MCP 客户端使用 |
 | `IFIND_NEWS_MCP_URL` | 是（iFinD 监测） | 新闻公告 MCP 的 Streamable HTTP 地址 |
 | `IFIND_STOCK_MCP_URL` | 是（iFinD 监测） | A股数据 MCP 的 Streamable HTTP 地址 |
@@ -71,13 +89,13 @@ npm run test
 npm run build
 ```
 
-部署到 Vercel 后，在 Project Settings → Environment Variables 配置上述 `OPENAI_*` 与 `IFIND_*` 变量；不要将任何 Key、token 放入客户端变量或 GitHub 仓库。
+部署到 Vercel 后，在 Project Settings → Environment Variables 配置一组 `OPENAI_*` 或 `ZHIPU_*`，以及 `IFIND_*` 变量；不要将任何 Key、token 放入客户端变量或 GitHub 仓库。
 
 ## 已知边界与未做事项
 
 - 监测的是固定历史区间，不是实时盯盘；定时触发、账号体系、云端持久化和真实推送尚未实现。
 - 导入内容在浏览器本地存储中保存，刷新后可恢复，但不跨设备同步。
-- 当前学校网关在生产验证中返回 HTTP 400，不接受 function calling；因此泛事件的 MCP 监测会明确停止并提示原因，不会伪造检索结果。固定案例不依赖该网关，仍可完整复现。
+- 泛事件监测需要所选模型支持 Chat Completions、工具调用与 JSON 输出；若模型或 MCP 调用失败，应用会明确停止并提示原因，不会伪造检索结果。固定案例不依赖外部模型，仍可完整复现。
 - 仅覆盖一个固定历史事件的完整版本演化；全市场自动事件聚类、后台调度，以及“更正/过期”材料的端到端交互仍是后续能力。
 - 首版以固定历史案例呈现正式版本演化；传闻、观点与缺失原文的材料只会停留在候选核验队列，不会被伪造成正式版本。
 - 该产品仅做信息证据治理，不构成证券投资咨询或交易建议。

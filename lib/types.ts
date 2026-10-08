@@ -21,6 +21,18 @@ export type EvidenceItem = {
   reviewOutcome?: "支持当前结论" | "待人工核验" | "更正旧结论" | "已过期";
 };
 
+export type MarketReaction = {
+  evidenceId: string;
+  status: "停牌中" | "已观察" | "待补充";
+  windowLabel: string;
+  stockMoves: Array<{ label: string; returnPct: number; note?: string }>;
+  benchmark?: { label: string; returnPct: number };
+  followThrough?: string;
+  observation: string;
+  caveat: string;
+  sources: Array<{ label: string; url?: string }>;
+};
+
 export type VersionKind = "首次披露" | "更新" | "更正" | "否认";
 
 export type EventVersion = {

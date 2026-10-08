@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { evidenceFromImport, nextState } from "@/lib/evidence";
-import { EVENT_META, SEED_EVIDENCE, SEED_VERSIONS } from "@/lib/seed-data";
-import type { AgentProposal, AgentRun, EvidenceItem, EventState, EventVersion, ImportedMaterial, ResearchTask } from "@/lib/types";
+import { EVENT_META, marketReactionFor, SEED_EVIDENCE, SEED_VERSIONS } from "@/lib/seed-data";
+import type { AgentProposal, AgentRun, EvidenceItem, EventState, EventVersion, ImportedMaterial, MarketReaction, ResearchTask } from "@/lib/types";
 
 const STORAGE_KEY = "signaltrace-hygon-sugon-v2";
 const DEMO_TASK: ResearchTask = { companyQuery: "海光信息 688041、中科曙光 603019", eventQuery: "换股吸收合并 重大资产重组", cutoffDate: "2025-09-06" };
@@ -72,6 +72,8 @@ export default function Home() {
 
   const current = versions[versions.length - 1];
   const timeline = useMemo(() => [...evidence].sort((a, b) => a.disclosedAt.localeCompare(b.disclosedAt)), [evidence]);
+  const selectedReaction = marketReactionFor(selected.id);
+  const keyReaction = marketReactionFor("plan");
 
   async function analyze() {
     setError(null);
@@ -239,13 +241,14 @@ export default function Home() {
           </article>
 
           <article className="panel market-card">
-            <div className="panel-heading"><span>市场反应</span><small>非因果验证</small></div>
+            <div className="panel-heading"><span>关键市场反应</span><small>非因果验证</small></div>
             <div className="market-grid">
-              <div><span>观察窗口</span><b>05.23 — 06.10</b></div>
-              <div><span>交易状态</span><b>停牌 / 复牌</b></div>
-              <div><span>数据口径</span><b>历史快照</b></div>
+              <div><span>观察窗口</span><b>{keyReaction?.windowLabel}</b></div>
+              <div><span>中科曙光 T0</span><b className="positive-move">+10.00%</b></div>
+              <div><span>海光信息 T0</span><b className="positive-move">+4.30%</b></div>
+              <div><span>上证指数 T0</span><b>+0.43%</b></div>
             </div>
-            <p className="fine-print">首版仅展示事件窗口与交易状态。价格、成交额等字段需接入扶摇/iFinD 后按来源、时点与单位补全；缺失时不生成数值结论。</p>
+            <p className="fine-print">复牌日的观察结果。选择时间线节点后，可查看该节点的停牌、非交易日或待补行情说明。</p>
           </article>
 
           <article className="panel version-card">
@@ -271,6 +274,8 @@ export default function Home() {
             <dl><div><dt>发生时间</dt><dd>{selected.occurredAt}</dd></div><div><dt>披露时间</dt><dd>{selected.disclosedAt}</dd></div><div><dt>抓取时间</dt><dd>{formatTimestamp(selected.capturedAt)}</dd></div><div><dt>更新时间</dt><dd>{formatTimestamp(selected.updatedAt)}</dd></div></dl>
             <small className="source-reference">{selected.sourceLabel ?? "用户导入材料"} · 处理结果：{selected.reviewOutcome ?? "待规则裁决"}</small>{selected.sourceUrl ? <a href={selected.sourceUrl} target="_blank" rel="noreferrer">打开公告原文 ↗</a> : <span className="missing-source">未提供可直达原文，不能作为正式结论依据</span>}
           </article>
+
+          {selectedReaction && <MarketReactionCard reaction={selectedReaction} />}
 
           <article className="panel monitor-card">
             <div className="panel-heading"><span>Agent 监测运行</span><small>最多 4 次工具调用</small></div>
@@ -301,6 +306,18 @@ export default function Home() {
       </section>
     </main>
   );
+}
+
+function MarketReactionCard({ reaction }: { reaction: MarketReaction }) {
+  return <article className="panel market-reaction-card">
+    <div className="panel-heading"><span>事件窗口与市场反应</span><span className={`reaction-status ${reaction.status === "已观察" ? "tone-green" : "tone-amber"}`}>{reaction.status}</span></div>
+    <p className="reaction-window">{reaction.windowLabel}</p>
+    {reaction.stockMoves.length > 0 ? <div className="reaction-moves">{reaction.stockMoves.map((move) => <div key={move.label}><span>{move.label}</span><b className={move.returnPct >= 0 ? "positive-move" : "negative-move"}>{move.returnPct >= 0 ? "+" : ""}{move.returnPct.toFixed(2)}%</b><small>{move.note}</small></div>)}{reaction.benchmark && <div><span>{reaction.benchmark.label}</span><b>{reaction.benchmark.returnPct >= 0 ? "+" : ""}{reaction.benchmark.returnPct.toFixed(2)}%</b><small>同期市场基准</small></div>}</div> : <div className="reaction-empty">本节点不展示收益数值。</div>}
+    <p className="reaction-observation">{reaction.observation}</p>
+    {reaction.followThrough && <p className="reaction-follow-through"><b>后续观察：</b>{reaction.followThrough}</p>}
+    <p className="reaction-caveat">{reaction.caveat}</p>
+    <div className="reaction-sources">{reaction.sources.map((source) => source.url ? <a key={source.label} href={source.url} target="_blank" rel="noreferrer">{source.label} ↗</a> : <small key={source.label} className="source-reference">{source.label}</small>)}</div>
+  </article>;
 }
 
 function AgentRunPanel({ run, task, compact = false }: { run: AgentRun; task: ResearchTask; compact?: boolean }) {

@@ -6,6 +6,8 @@ import { useSearchParams } from "next/navigation";
 import { evidenceFromImport, nextState } from "@/lib/evidence";
 import type { AgentProposal, AgentRun, EvidenceItem, EventState, ImportedMaterial, ResearchTask } from "@/lib/types";
 
+const RESEARCH_STORAGE_PREFIX = "signaltrace-research-v1:";
+
 const stateTone: Record<EventState, string> = {
   "筹划中": "tone-amber",
   "预案披露": "tone-blue",
@@ -39,6 +41,7 @@ function ResearchWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const startedTask = useRef<string | null>(null);
   const taskKey = `${task.companyQuery}|${task.eventQuery}|${task.cutoffDate}`;
+  const storageKey = `${RESEARCH_STORAGE_PREFIX}${taskKey}`;
   const validTask = Boolean(task.companyQuery && task.eventQuery && /^\d{4}-\d{2}-\d{2}$/.test(task.cutoffDate));
 
   const runResearch = useCallback(async () => {
@@ -75,10 +78,24 @@ function ResearchWorkspace() {
   useEffect(() => {
     if (startedTask.current === taskKey) return;
     startedTask.current = taskKey;
+    const saved = window.localStorage.getItem(storageKey);
+    if (saved) {
+      try {
+        setRun(JSON.parse(saved) as AgentRun);
+        setLoading(false);
+        return;
+      } catch {
+        window.localStorage.removeItem(storageKey);
+      }
+    }
     void runResearch();
-  }, [runResearch, taskKey]);
+  }, [runResearch, storageKey, taskKey]);
 
-  if (run) return <ResearchDashboard task={task} run={run} onRerun={() => void runResearch()} />;
+  useEffect(() => {
+    if (run) window.localStorage.setItem(storageKey, JSON.stringify(run));
+  }, [run, storageKey]);
+
+  if (run) return <ResearchDashboard task={task} run={run} onRerun={() => void runResearch()} onRunChange={setRun} />;
 
   return <main>
     <header className="topbar">
@@ -97,11 +114,11 @@ function ResearchWorkspace() {
   </main>;
 }
 
-function ResearchDashboard({ task, run, onRerun }: { task: ResearchTask; run: AgentRun; onRerun: () => void }) {
+function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: ResearchTask; run: AgentRun; onRerun: () => void; onRunChange: (run: AgentRun) => void }) {
   const evidence = useMemo<EvidenceItem[]>(() => run.evidence?.length ? [...run.evidence].sort((left, right) => left.disclosedAt.localeCompare(right.disclosedAt)) : [], [run]);
   const canBuildTimeline = run.status === "待用户确认" && evidence.some((item) => item.sourceUrl && item.quote);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  if (!canBuildTimeline) return <CandidateResearchInbox task={task} run={run} onRerun={onRerun} />;
+  if (!canBuildTimeline) return <CandidateResearchInbox task={task} run={run} onRerun={onRerun} onRunChange={onRunChange} />;
 
   const selected = evidence.find((item) => item.id === selectedId) ?? evidence[0];
   const state = run.proposal?.proposedState ?? "待人工核验";
@@ -125,21 +142,22 @@ function ResearchDashboard({ task, run, onRerun }: { task: ResearchTask; run: Ag
   </main>;
 }
 
-function CandidateResearchInbox({ task, run, onRerun }: { task: ResearchTask; run: AgentRun; onRerun: () => void }) {
+function CandidateResearchInbox({ task, run, onRerun, onRunChange }: { task: ResearchTask; run: AgentRun; onRerun: () => void; onRunChange: (run: AgentRun) => void }) {
   const [material, setMaterial] = useState<ImportedMaterial>(blankMaterial);
   const [proposal, setProposal] = useState<AgentProposal | null>(null);
   const [loading, setLoading] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
-  const [formalRun, setFormalRun] = useState<AgentRun | null>(null);
   const candidates = run.evidence?.length ? run.evidence.map((item) => ({
     title: item.title,
     source: item.publisher,
+    sourceUrl: item.sourceUrl,
     excerpt: item.summary || item.quote,
     capturedAt: item.capturedAt.slice(0, 10),
     hasSource: Boolean(item.sourceUrl),
   })) : run.toolCalls.filter((trace) => trace.status === "完成" && trace.excerpt).map((trace) => ({
     title: `${trace.source} 返回的检索片段`,
     source: trace.source,
+    sourceUrl: "",
     excerpt: trace.excerpt ?? trace.summary,
     capturedAt: trace.capturedAt.slice(0, 10),
     hasSource: false,
@@ -169,17 +187,15 @@ function CandidateResearchInbox({ task, run, onRerun }: { task: ResearchTask; ru
       return;
     }
     const item = evidenceFromImport(material, proposal, state);
-    setFormalRun({ ...run, id: `${run.id}-confirmed`, status: "待用户确认", stopReason: "人工已核验并确认首条权威证据，已建立正式事件工作台。", proposal, evidence: [item] });
+    onRunChange({ ...run, id: `${run.id}-confirmed`, status: "待用户确认", stopReason: "人工已核验并确认首条权威证据，已建立正式事件工作台。", proposal, evidence: [item] });
   }
-
-  if (formalRun) return <ResearchDashboard task={task} run={formalRun} onRerun={onRerun} />;
 
   return <main>
     <header className="topbar"><div className="topbar-left"><div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div><a className="topbar-start" href="/">← 修改研究任务</a></div><div className="topbar-meta">金融事件证据 Agent <span className="divider" /> 不构成投资建议</div></header>
     <section className="hero"><div><p className="eyebrow">RESEARCH INBOX · NOT A FORMAL EVENT</p><h1>{task.companyQuery}</h1><p className="subtitle">{task.eventQuery} · 截至 {task.cutoffDate} 的候选材料收件箱</p></div><div className="watchlist"><span>研究标的</span><b>{task.companyQuery}</b></div></section>
     <section className="inbox-layout">
       <aside className="left-column"><article className="panel conclusion-card"><div className="panel-label">尚未建立正式事件</div><div className="state-row"><span className="status-pill tone-amber">待人工核验</span><span className="version">候选池</span></div><p>Agent 找到的是可能相关的材料，不等于已识别出“同一投资事件”。在交易对手、原文链接或时间字段不完整时，系统不会伪造一条时间线。</p><div className="risk-callout"><strong>为什么没有时间线？</strong><span>当前材料不足以安全归并，也不能判断其是事实、观点、推测或传闻。</span></div></article><article className="panel market-card"><div className="panel-heading"><span>检索覆盖</span><small>非因果验证</small></div><div className="market-grid"><div><span>工具调用</span><b>{run.toolCalls.length} 次</b></div><div><span>候选片段</span><b>{candidates.length} 条</b></div><div><span>历史截点</span><b>{task.cutoffDate}</b></div></div><p className="fine-print">MCP 的返回先进入候选池；只有来源和事件归并通过后，才会成为可追溯证据。</p></article></aside>
-      <section className="panel inbox-panel"><div className="timeline-header"><div><div className="panel-label">候选材料收件箱</div><h2>先核验，再建立时间线</h2></div><span>{candidates.length} 条待处理材料</span></div><p className="inbox-intro">这里展示 Agent 实际拿到的检索线索，但它们尚未获得“正式证据”资格。</p>{candidates.length ? <div className="candidate-list">{candidates.map((candidate, index) => <article className="candidate-card" key={`${candidate.title}-${index}`}><div><span className="candidate-index">候选 {String(index + 1).padStart(2, "0")}</span><span className={`candidate-status ${candidate.hasSource ? "has-source" : ""}`}>{candidate.hasSource ? "待事件归并" : "缺原文链接"}</span></div><h3>{candidate.title}</h3><p>{candidate.excerpt}</p><small>{candidate.source} · 抓取于 {candidate.capturedAt}</small><button className="candidate-use" onClick={() => { setMaterial({ title: candidate.title, publisher: candidate.source, sourceUrl: "", disclosedAt: candidate.capturedAt, body: candidate.excerpt }); setProposal(null); setReviewError(null); }}>用此候选补充原文 →</button></article>)}</div> : <div className="timeline-empty">本次 MCP 未返回可展示的候选材料。请补充公司代码、交易对手或更具体的事件名称后重试。</div>}</section>
+      <section className="panel inbox-panel"><div className="timeline-header"><div><div className="panel-label">候选材料收件箱</div><h2>先核验，再建立时间线</h2></div><span>{candidates.length} 条待处理材料</span></div><p className="inbox-intro">这里展示 Agent 实际拿到的检索线索，但它们尚未获得“正式证据”资格。</p>{candidates.length ? <div className="candidate-list">{candidates.map((candidate, index) => <article className="candidate-card" key={`${candidate.title}-${index}`}><div><span className="candidate-index">候选 {String(index + 1).padStart(2, "0")}</span><span className={`candidate-status ${candidate.hasSource ? "has-source" : ""}`}>{candidate.hasSource ? "待事件归并" : "缺原文链接"}</span></div><h3>{candidate.title}</h3><p>{candidate.excerpt}</p><small>{candidate.source} · 抓取于 {candidate.capturedAt}</small><button className="candidate-use" onClick={() => { setMaterial({ title: candidate.title, publisher: candidate.source, sourceUrl: candidate.sourceUrl, disclosedAt: candidate.capturedAt, body: candidate.excerpt }); setProposal(null); setReviewError(null); }}>用此候选补充原文 →</button></article>)}</div> : <div className="timeline-empty">本次 MCP 未返回可展示的候选材料。请补充公司代码、交易对手或更具体的事件名称后重试。</div>}</section>
       <aside className="right-column"><article className="panel review-card"><div className="panel-heading"><span>人工核验</span><small>建立正式事件前</small></div><p className="form-note">先打开权威公告，补齐原文 URL 和正文；Agent 只生成草案，最后由你确认。</p><div className="review-form"><label>标题<input value={material.title} onChange={(event) => setMaterial({ ...material, title: event.target.value })} placeholder="公告标题" /></label><label>发布者<input value={material.publisher} onChange={(event) => setMaterial({ ...material, publisher: event.target.value })} placeholder="例如：交易所 / 上市公司" /></label><label>披露日期<input type="date" value={material.disclosedAt} onChange={(event) => setMaterial({ ...material, disclosedAt: event.target.value })} /></label><label>权威原文 URL<input value={material.sourceUrl} onChange={(event) => setMaterial({ ...material, sourceUrl: event.target.value })} placeholder="https://" /></label><label>原文正文 / 关键段落<textarea rows={6} value={material.body} onChange={(event) => setMaterial({ ...material, body: event.target.value })} placeholder="粘贴至少一段能支持事件结论的原文…" /></label></div>{reviewError && <div className="error-box">{reviewError}</div>}<button className="primary-button" onClick={() => void analyzeMaterial()} disabled={loading}>{loading ? "Agent 正在核验…" : "让 Agent 生成核验草案"}</button>{proposal && <div className="review-proposal"><div className="proposal-metrics"><span>匹配：<b>{proposal.eventMatch}</b></span><span>置信：<b>{proposal.confidence}</b></span></div><p><b>拟议结论：</b>{proposal.suggestedConclusion}</p><blockquote>“{proposal.quote}”</blockquote><p className="form-note">{proposal.rationale}</p><button className="confirm-button" onClick={confirmProposal}>确认并建立正式事件</button></div>}</article><article className="panel monitor-card"><div className="panel-heading"><span>Agent 本次判断</span><small>已停止</small></div><p className="form-note">{run.stopReason}</p><div className="inbox-next"><b>下一步建议</b><span>补充交易对手、标的名称或公告编号后重新检索；取得可直达原文后，再由 Agent 归并为正式事件。</span></div><button className="primary-button" onClick={onRerun}>补充线索后重新运行</button><AgentRunPanel run={run} task={task} /></article></aside>
     </section>
   </main>;
@@ -189,12 +205,28 @@ function ResearchLoading() {
   return <main><header className="topbar"><div className="topbar-left"><div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div></div><div className="topbar-meta">金融事件证据 Agent <span className="divider" /> 不构成投资建议</div></header><section className="execution-section result-content"><div className="research-loading panel"><span className="live-dot" />正在载入研究任务…</div></section></main>;
 }
 
+const toolNames: Record<AgentRun["toolCalls"][number]["tool"], string> = {
+  search_event_notices: "公告检索",
+  search_related_news: "新闻检索",
+  get_disclosed_event_context: "披露事件检索",
+  get_historical_market_context: "市场背景检索",
+};
+
+function runStatusExplanation(status: AgentRun["status"]) {
+  if (status === "待用户确认") return "证据与事件归并已通过 Agent 草案检查；仍需你确认，才会建立或更新正式事件。";
+  if (status === "无状态变化") return "已完成有限检索，但没有发现足以改变当前正式结论的新事实。";
+  if (status === "待人工核验") return "材料缺少可直达原文、同一事件匹配不足、存在冲突，或 Agent 主动要求复核。";
+  if (status === "失败") return "工具规划或外部数据调用失败；系统不会根据不完整结果生成结论。";
+  return "Agent 正在执行受限检索。";
+}
+
 function AgentRunPanel({ run, task }: { run: AgentRun; task: ResearchTask }) {
   return <div className="run-card execution-card">
     <div className="execution-flow"><span>任务</span><i>→</i><span>检索计划</span><i>→</i><span>MCP 工具</span><i>→</i><span>证据草案</span><i>→</i><span>人工确认</span></div>
     <div><span className={`status-mini ${run.status === "失败" ? "tone-red" : run.status === "待用户确认" ? "tone-violet" : "tone-amber"}`}>{run.status}</span><small>{run.toolCalls.length} 次工具调用 · 截点 {task.cutoffDate}</small></div>
+    <div className="agent-state-explainer"><b>当前状态为何是这样？</b><span>{runStatusExplanation(run.status)}</span><small>硬规则：最多 4 次调用；同一工具不可重复；无原文、非同一事件、非事实材料或要求复核的草案，均不能直接建立正式结论。</small></div>
     <p>{run.stopReason}</p>
-    {run.toolCalls.map((trace, index) => <div className="run-trace" key={`${run.id}-${trace.tool}`}><b>{index + 1}. {trace.status === "完成" ? "✓" : "!"} {trace.tool}</b><span>{trace.source} · {trace.summary}</span></div>)}
+    {run.toolCalls.map((trace, index) => <div className="run-trace" key={`${run.id}-${trace.tool}`}><b>{index + 1}. {trace.status === "完成" ? "✓" : "!"} {toolNames[trace.tool]}</b><span>{trace.source} · {trace.summary}</span></div>)}
     {run.proposal && <div className="run-proposal"><b>Agent 草案</b><span>{run.proposal.suggestedConclusion}</span>{run.proposal.conflict && <small>冲突：{run.proposal.conflict}</small>}</div>}
   </div>;
 }

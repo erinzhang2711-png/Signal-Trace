@@ -94,4 +94,22 @@ describe("MCP candidate evidence extraction", () => {
       publisher: "财经媒体",
     });
   });
+
+  it("matches a company name when the user also supplies its stock code", () => {
+    const output = JSON.stringify({ data: [{
+      title: "宁德时代收购耀宁新能源资产",
+      summary: "宁德时代拟收购耀宁新能源资产，交易仍需后续披露。",
+      date: "2026-09-14",
+      url: "https://example.com/notice",
+      publisher: "财经媒体",
+    }] });
+
+    const evidence = extractMcpEvidence(output, "search_related_news", {
+      companyQuery: "宁德时代 300750",
+      eventQuery: "收购耀宁",
+      cutoffDate: "2026-10-06",
+    }, "2026-10-06T00:00:00.000Z");
+
+    expect(evidence).toHaveLength(1);
+  });
 });

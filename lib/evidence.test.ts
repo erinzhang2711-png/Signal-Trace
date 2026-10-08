@@ -19,13 +19,13 @@ const proposal: AgentProposal = {
   quote: "尚需履行相关程序后方可实施。",
   conflict: null,
   rationale: "公司公告重申待履行程序。",
-  requiresReview: true,
+  requiresReview: false,
   suggestedConclusion: "交易持续推进，尚未完成。",
 };
 
 describe("evidence governance", () => {
   it("recognizes official company material", () => {
-    expect(sourceTierFromPublisher(material.publisher, material.sourceUrl)).toBe("交易所/公司公告");
+    expect(sourceTierFromPublisher(material.publisher, material.sourceUrl)).toBe("公司投资者关系");
     expect(hasMinimumEvidence(material, proposal)).toBe(true);
   });
 
@@ -33,6 +33,20 @@ describe("evidence governance", () => {
     const rumor = { ...proposal, contentKind: "传闻" as const, proposedState: "已完成" as const };
     const unsourced = { ...material, publisher: "", sourceUrl: "" };
     expect(nextState("持续推进", rumor, unsourced)).toBe("待人工核验");
+  });
+
+  it("keeps an Agent draft in review when the Agent requests review", () => {
+    expect(nextState("持续推进", { ...proposal, requiresReview: true }, material)).toBe("待人工核验");
+  });
+
+  it("does not let a media URL establish a formal event state", () => {
+    const mediaMaterial = { ...material, publisher: "某财经媒体", sourceUrl: "https://news.example.com/event" };
+    expect(nextState("持续推进", proposal, mediaMaterial)).toBe("待人工核验");
+  });
+
+  it("requires an exchange announcement to mark an event completed", () => {
+    const completed = { ...proposal, proposedState: "已完成" as const };
+    expect(nextState("持续推进", completed, material)).toBe("待人工核验");
   });
 
   it("allows a sourced official update to establish a formal event state", () => {

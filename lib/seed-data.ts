@@ -1,4 +1,4 @@
-import type { EvidenceItem, EventVersion } from "@/lib/types";
+import type { EvidenceItem, EventVersion, MarketReaction } from "@/lib/types";
 
 export const EVENT_META = {
   id: "hygon-sugon-merger-2025",
@@ -100,6 +100,68 @@ export const SEED_EVIDENCE: EvidenceItem[] = [
     reviewOutcome: "支持当前结论",
   },
 ];
+
+export const SEED_MARKET_REACTIONS: MarketReaction[] = [
+  {
+    evidenceId: "suspension",
+    status: "停牌中",
+    windowLabel: "2025-05-26 至 2025-06-09",
+    stockMoves: [],
+    observation: "两只标的在筹划重大资产重组期间停牌，期间不存在可交易的日度市场反应。",
+    caveat: "停牌不代表市场对交易价值的正负判断；复牌日才是首个可观察窗口。",
+    sources: [{ label: "上交所停牌及复牌公告" }],
+  },
+  {
+    evidenceId: "plan",
+    status: "已观察",
+    windowLabel: "复牌日 T0 · 2025-06-10",
+    stockMoves: [
+      { label: "海光信息 688041", returnPct: 4.3, note: "复牌日收盘涨幅" },
+      { label: "中科曙光 603019", returnPct: 10, note: "复牌日收盘涨幅，68.09 元" },
+    ],
+    benchmark: { label: "上证指数", returnPct: 0.43 },
+    followThrough: "中科曙光于 2025-06-13 收于 68.49 元，较复牌日收盘再上涨约 0.59%。",
+    observation: "复牌日两只标的均显著跑赢大盘；中科曙光当日涨停。",
+    caveat: "这是事件窗口观察，不证明公告是价格变化的唯一原因；停牌、换股对价、行业情绪与市场环境均可能影响价格。",
+    sources: [
+      { label: "中科曙光复牌日行情", url: "https://stock.stockstar.com/RB2025061100003855.shtml" },
+      { label: "海光信息复牌日行情", url: "https://fund.eastmoney.com/a/202506103426762592.html" },
+      { label: "上证指数当日收盘", url: "https://www.jiemian.com/article/12886681.html" },
+      { label: "中科曙光后续收盘", url: "https://stock.stockstar.com/RB2025061400009752.shtml" },
+    ],
+  },
+  {
+    evidenceId: "ir",
+    status: "待补充",
+    windowLabel: "2025-06-11 · 投资者说明会",
+    stockMoves: [],
+    observation: "该材料发生在复牌窗口内，不能与预案披露日的反应重复归因。",
+    caveat: "需要独立的事件研究设计或更长窗口后，才应比较其边际市场反应。",
+    sources: [{ label: "待 iFinD 历史行情补全" }],
+  },
+  {
+    evidenceId: "july-progress",
+    status: "待补充",
+    windowLabel: "2025-07-09 · 进展公告",
+    stockMoves: [],
+    observation: "进展公告维持既有状态，待补齐日线与基准后再观察是否出现增量反应。",
+    caveat: "没有预先定义的价格窗口和基准，系统不生成收益或因果结论。",
+    sources: [{ label: "待 iFinD 历史行情补全" }],
+  },
+  {
+    evidenceId: "sept-progress",
+    status: "待补充",
+    windowLabel: "2025-09-06 · 非交易日披露",
+    stockMoves: [],
+    observation: "公告披露日为非交易日；应以随后的首个交易日作为可观察窗口，而不是把非交易日当作 T0。",
+    caveat: "待 iFinD 返回下一交易日与基准行情后再生成市场反应卡片。",
+    sources: [{ label: "待 iFinD 历史行情补全" }],
+  },
+];
+
+export function marketReactionFor(evidenceId: string) {
+  return SEED_MARKET_REACTIONS.find((reaction) => reaction.evidenceId === evidenceId);
+}
 
 export const SEED_VERSIONS: EventVersion[] = [
   {

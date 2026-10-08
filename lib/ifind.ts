@@ -138,9 +138,14 @@ function relevanceTerms(task: ResearchTask) {
   return task.eventQuery.split(/[\s、，,；;·×xX]+/).filter((term) => term.length >= 2);
 }
 
+function companyTerms(task: ResearchTask) {
+  return [...new Set(task.companyQuery.match(/[\u4e00-\u9fa5]{2,}|\d{6}|[A-Za-z]{2,}/g) ?? [])];
+}
+
 function isRelevant(task: ResearchTask, text: string) {
-  const terms = relevanceTerms(task);
-  return text.includes(task.companyQuery) && terms.length > 0 && terms.every((term) => text.includes(term));
+  const companies = companyTerms(task);
+  const events = relevanceTerms(task);
+  return companies.some((term) => text.includes(term)) && (events.length === 0 || events.some((term) => text.includes(term)));
 }
 
 function toolLabel(tool: AgentToolName) {
