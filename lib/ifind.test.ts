@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { extractMcpEvidence } from "./ifind";
+import { extractMarketSeries, extractMcpEvidence } from "./ifind";
 
 describe("MCP candidate evidence extraction", () => {
   it("keeps a dated, relevant, linked announcement and excludes future or unrelated records", () => {
@@ -111,5 +111,37 @@ describe("MCP candidate evidence extraction", () => {
     }, "2026-10-06T00:00:00.000Z");
 
     expect(evidence).toHaveLength(1);
+  });
+
+  it("does not turn a company-only raw search fragment into an event candidate", () => {
+    const output = "2026年10月8日 宁德时代发布股东询价转让结果公告，交易金额为 23799720000 元。";
+    const evidence = extractMcpEvidence(output, "search_event_notices", {
+      companyQuery: "宁德时代",
+      eventQuery: "收购耀宁",
+      cutoffDate: "2026-10-08",
+    }, "2026-10-08T00:00:00.000Z");
+
+    expect(evidence).toHaveLength(0);
+  });
+
+  it("extracts a dated close-price series only when the MCP returns real daily fields", () => {
+    const output = JSON.stringify({ data: [
+      { 日期: "2026-09-01", 收盘价: "312.40", 涨跌幅: "1.20" },
+      { 日期: "2026-09-02", 收盘价: "316.00", 涨跌幅: "1.15" },
+    ] });
+    const series = extractMarketSeries(output, { companyQuery: "宁德时代", eventQuery: "收购耀宁", cutoffDate: "2026-10-08" }, "2026-10-08T00:00:00.000Z");
+
+    expect(series?.points).toEqual([{ date: "2026-09-01", close: 312.4, changePct: 1.2 }, { date: "2026-09-02", close: 316, changePct: 1.15 }]);
+  });
+
+  it("parses iFinD's JSON-wrapped Markdown daily-price table and skips non-trading dates", () => {
+    const output = JSON.stringify({ code: 1, data: { answer: "|证券代码|证券简称|日期|收盘价|涨跌幅（单位：%）|成交额（单位：元）|成交量|\n|---|---|---|---|---|---|---|\n|688041.SH|海光信息|20250611|135.5|-4.564|43.6718亿|3197.0969万|\n|688041.SH|海光信息|20250610|141.98|4.2974|87.3016亿|6090.7734万|\n|688041.SH|海光信息|20250609|136.13|||||\n|688041.SH|海光信息|20250608|136.13|||||" } });
+    const series = extractMarketSeries(output, { companyQuery: "海光信息", eventQuery: "吸收合并", cutoffDate: "2025-06-17" }, "2025-06-17T00:00:00.000Z");
+
+    expect(series?.points).toEqual([
+      { date: "2025-06-10", close: 141.98, changePct: 4.2974, amount: 8730160000, volume: 60907734 },
+      { date: "2025-06-11", close: 135.5, changePct: -4.564, amount: 4367180000, volume: 31970969 },
+    ]);
+    expect(series?.nonTradingDates).toEqual(["2025-06-09", "2025-06-08"]);
   });
 });

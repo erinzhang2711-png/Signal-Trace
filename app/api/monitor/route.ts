@@ -5,7 +5,7 @@ import { z } from "zod";
 import { AGENT_TOOL_NAMES, runIFindTool } from "@/lib/ifind";
 import { sourceTierFromPublisher } from "@/lib/evidence";
 import { getLLMRuntime } from "@/lib/llm";
-import type { AgentProposal, AgentRun, AgentToolName, EvidenceItem, ResearchTask } from "@/lib/types";
+import type { AgentProposal, AgentRun, AgentToolName, EvidenceItem, MarketSeries, ResearchTask } from "@/lib/types";
 
 const inputSchema = z.object({
   currentState: z.enum(["筹划中", "预案披露", "持续推进", "待人工核验", "已否认", "已完成"]),
@@ -140,7 +140,19 @@ export async function POST(request: Request) {
   const startedAt = new Date().toISOString();
   const traces: AgentRun["toolCalls"] = [];
   const mcpEvidence: EvidenceItem[] = [];
+  let marketSeries: MarketSeries | undefined;
   const executed = new Set<AgentToolName>();
+
+  async function collectMissingBaselineTools() {
+    for (const tool of AGENT_TOOL_NAMES) {
+      if (executed.has(tool)) continue;
+      executed.add(tool);
+      const toolResult = await runIFindTool(tool, payload.data!.task);
+      traces.push(toolResult.trace);
+      mcpEvidence.push(...toolResult.candidates);
+      marketSeries ??= toolResult.marketSeries;
+    }
+  }
 
   try {
     let result: Record<string, unknown>;
@@ -163,11 +175,12 @@ export async function POST(request: Request) {
           const toolResult = await runIFindTool(tool, payload.data.task);
           traces.push(toolResult.trace);
           mcpEvidence.push(...toolResult.candidates);
+          marketSeries ??= toolResult.marketSeries;
           return { type: "function_call_output" as const, call_id: call.call_id, output: JSON.stringify({ source: toolResult.trace.source, capturedAt: toolResult.trace.capturedAt, content: toolResult.output }) };
         }));
         response = await runtime.client.responses.create({ model: runtime.model, previous_response_id: response.id, input: outputs, tools, tool_choice: "auto" });
       }
-      if (executed.size === 0) return NextResponse.json({ run: failedRun(startedAt, traces, "模型未调用证据工具；系统拒绝生成无来源结论。") });
+      await collectMissingBaselineTools();
       const finalResponse = await runtime.client.responses.create({
         model: runtime.model,
         previous_response_id: response.id,
@@ -196,12 +209,13 @@ export async function POST(request: Request) {
             const toolResult = await runIFindTool(tool, payload.data.task);
             traces.push(toolResult.trace);
             mcpEvidence.push(...toolResult.candidates);
+            marketSeries ??= toolResult.marketSeries;
             output = JSON.stringify({ source: toolResult.trace.source, capturedAt: toolResult.trace.capturedAt, content: toolResult.output });
           }
           messages.push({ role: "tool", tool_call_id: call.id, content: output });
         }
       }
-      if (executed.size === 0) return NextResponse.json({ run: failedRun(startedAt, traces, "模型未调用证据工具；系统拒绝生成无来源结论。") });
+      await collectMissingBaselineTools();
       const final = await runtime.client.chat.completions.create({
         model: runtime.model,
         messages: [...messages, { role: "user", content: "请现在只输出最终 JSON 草案。必须包含 decision、eventMatch、contentKind、proposedState、confidence、claim、quote、conflict、rationale、requiresReview、suggestedConclusion、stopReason、evidence。" }],
@@ -233,7 +247,7 @@ export async function POST(request: Request) {
     };
     const decision = result.decision as string;
     const status: AgentRun["status"] = modelEvidence.length === 0 || decision === "待人工核验" || proposal.requiresReview ? "待人工核验" : decision === "无状态变化" ? "无状态变化" : "待用户确认";
-    const run: AgentRun = { id: `run-${Date.now()}`, status, startedAt, endedAt: new Date().toISOString(), stopReason: extractedEvidence.length === 0 ? "未提取到可构建同一事件时间线的证据节点。" : modelEvidence.length === 0 ? "已展示代码提取的候选时间线；等待 Agent 归并与人工核验。" : (result.stopReason as string) || "已完成有限工具调用。", toolCalls: traces, proposal, evidence: extractedEvidence };
+    const run: AgentRun = { id: `run-${Date.now()}`, status, startedAt, endedAt: new Date().toISOString(), stopReason: extractedEvidence.length === 0 ? "未提取到可构建同一事件时间线的证据节点。" : modelEvidence.length === 0 ? "已展示代码提取的候选时间线；等待 Agent 归并与人工核验。" : (result.stopReason as string) || "已完成有限工具调用。", toolCalls: traces, proposal, evidence: extractedEvidence, marketSeries };
     return NextResponse.json({ run });
   } catch (error) {
     const run = failedRun(startedAt, traces, monitorFailureReason(runtime, traces.length, error));

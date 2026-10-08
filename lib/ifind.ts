@@ -1,6 +1,6 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 
-import type { AgentToolName, AgentToolTrace, EvidenceItem, ResearchTask, SourceTier } from "@/lib/types";
+import type { AgentToolName, AgentToolTrace, EvidenceItem, MarketPoint, MarketSeries, ResearchTask, SourceTier } from "@/lib/types";
 
 type McpTarget = "stock" | "news";
 type McpCall = { target: McpTarget; tool: string; arguments: Record<string, string | number> };
@@ -73,6 +73,8 @@ const DATE_KEYS = ["date", "publish_date", "pub_date", "publishdate", "publishti
 const URL_KEYS = ["url", "link", "source_url", "news_url", "notice_url", "原文链接", "链接", "网址"];
 const PUBLISHER_KEYS = ["source", "publisher", "media", "author", "来源", "发布方", "媒体", "资讯来源", "来源名称"];
 const BODY_KEYS = ["summary", "content", "abstract", "description", "text", "正文", "摘要", "内容", "简介", "资讯内容", "公告片段内容", "内容摘要"];
+const CLOSE_KEYS = ["close", "close_price", "closeprice", "收盘价", "收盘", "最新价"];
+const CHANGE_KEYS = ["change_pct", "changepercent", "pct_chg", "涨跌幅", "涨跌幅%"];
 
 function recordValue(record: UnknownRecord, keys: string[]) {
   const normalized = new Map(Object.entries(record).map(([key, value]) => [key.toLowerCase(), value]));
@@ -85,6 +87,7 @@ function recordValue(record: UnknownRecord, keys: string[]) {
 }
 
 function normalizeDate(value: string) {
+  if (/^20\d{6}$/.test(value)) return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
   const match = value.match(/(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})/);
   if (!match) return "";
   const normalized = `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
@@ -118,15 +121,19 @@ function parsedDocuments(output: string): unknown[] {
   });
 }
 
-function collectRecords(value: unknown, records: UnknownRecord[] = []): UnknownRecord[] {
+function nestedRecords(value: unknown, records: UnknownRecord[] = []): UnknownRecord[] {
   if (Array.isArray(value)) {
-    value.forEach((item) => collectRecords(item, records));
+    value.forEach((item) => nestedRecords(item, records));
   } else if (value && typeof value === "object") {
     const record = value as UnknownRecord;
-    if (recordValue(record, TITLE_KEYS) && recordValue(record, DATE_KEYS)) records.push(record);
-    Object.values(record).forEach((item) => collectRecords(item, records));
+    records.push(record);
+    Object.values(record).forEach((item) => nestedRecords(item, records));
   }
   return records;
+}
+
+function collectRecords(value: unknown) {
+  return nestedRecords(value).filter((record) => Boolean(recordValue(record, TITLE_KEYS) && recordValue(record, DATE_KEYS)));
 }
 
 function relevanceTerms(task: ResearchTask) {
@@ -162,9 +169,7 @@ function fallbackEvidenceFromText(output: string, tool: AgentToolName, task: Res
   return Array.from(output.matchAll(datePattern)).flatMap((match, index) => {
     const disclosedAt = normalizeDate(match[0]);
     const excerpt = output.slice(Math.max(0, (match.index ?? 0) - 180), (match.index ?? 0) + 300).replace(/\s+/g, " ").trim();
-    const terms = relevanceTerms(task);
-    const hasLocalSignal = excerpt.includes(task.companyQuery) || terms.some((term) => excerpt.includes(term));
-    if (!disclosedAt || disclosedAt > task.cutoffDate || seenDates.has(disclosedAt) || !hasLocalSignal) return [];
+    if (!disclosedAt || disclosedAt > task.cutoffDate || seenDates.has(disclosedAt) || !isRelevant(task, excerpt)) return [];
     seenDates.add(disclosedAt);
     return [{
       id: `mcp-raw-${capturedAt}-${index}`,
@@ -222,7 +227,85 @@ export function extractMcpEvidence(output: string, tool: AgentToolName, task: Re
   return structured.length > 0 ? structured : fallbackEvidenceFromText(output, tool, task, capturedAt);
 }
 
-export async function runIFindTool(tool: AgentToolName, task: ResearchTask): Promise<{ trace: AgentToolTrace; output: string; candidates: EvidenceItem[] }> {
+function numberValue(record: UnknownRecord, keys: string[]) {
+  const value = recordValue(record, keys).replace(/[,，%]/g, "");
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function chineseNumber(value: string) {
+  const match = value.replace(/[,，]/g, "").trim().match(/^(-?[\d.]+)\s*(万|亿)?$/);
+  if (!match) return null;
+  const number = Number(match[1]);
+  if (!Number.isFinite(number)) return null;
+  return number * (match[2] === "亿" ? 100_000_000 : match[2] === "万" ? 10_000 : 1);
+}
+
+function textValues(value: unknown, values: string[] = []) {
+  if (typeof value === "string") values.push(value);
+  else if (Array.isArray(value)) value.forEach((item) => textValues(item, values));
+  else if (value && typeof value === "object") Object.values(value).forEach((item) => textValues(item, values));
+  return values;
+}
+
+function marketPointsFromMarkdown(output: string, task: ResearchTask) {
+  const documents = parsedDocuments(output);
+  const texts = [...textValues(documents), output];
+  const points: MarketPoint[] = [];
+  const nonTradingDates: string[] = [];
+  const seen = new Set<string>();
+
+  for (const text of texts) {
+    const lines = text.split(/\r?\n/);
+    const headerIndex = lines.findIndex((line) => line.includes("|日期|") && line.includes("|收盘价|"));
+    if (headerIndex < 0) continue;
+    const headers = lines[headerIndex].split("|").map((cell) => cell.trim()).filter(Boolean);
+    const dateIndex = headers.findIndex((header) => header === "日期");
+    const closeIndex = headers.findIndex((header) => header === "收盘价");
+    const changeIndex = headers.findIndex((header) => header.startsWith("涨跌幅"));
+    const volumeIndex = headers.findIndex((header) => header === "成交量");
+    const amountIndex = headers.findIndex((header) => header.startsWith("成交额"));
+    if (dateIndex < 0 || closeIndex < 0) continue;
+
+    for (const line of lines.slice(headerIndex + 2)) {
+      if (!line.trim().startsWith("|")) break;
+      const cells = line.split("|").map((cell) => cell.trim()).filter(Boolean);
+      const date = normalizeDate(cells[dateIndex] ?? "");
+      const close = chineseNumber(cells[closeIndex] ?? "");
+      if (!date || date > task.cutoffDate || close === null || close <= 0 || seen.has(date)) continue;
+      const changePct = changeIndex >= 0 ? chineseNumber(cells[changeIndex] ?? "") : null;
+      const volume = volumeIndex >= 0 ? chineseNumber(cells[volumeIndex] ?? "") : null;
+      const amount = amountIndex >= 0 ? chineseNumber(cells[amountIndex] ?? "") : null;
+      // iFinD may list weekends and suspension dates with a carried-forward close
+      // but no return, volume, or amount. They are not tradable market observations.
+      if (changePct === null && volume === null && amount === null) {
+        nonTradingDates.push(date);
+        continue;
+      }
+      seen.add(date);
+      points.push({ date, close, ...(changePct === null ? {} : { changePct }), ...(volume === null ? {} : { volume }), ...(amount === null ? {} : { amount }) });
+    }
+  }
+  return { points, nonTradingDates: [...new Set(nonTradingDates)] };
+}
+
+export function extractMarketSeries(output: string, task: ResearchTask, capturedAt: string): MarketSeries | undefined {
+  const seen = new Set<string>();
+  const structuredPoints = parsedDocuments(output).flatMap((document) => nestedRecords(document)).flatMap((record): MarketPoint[] => {
+    const date = normalizeDate(recordValue(record, DATE_KEYS));
+    const close = numberValue(record, CLOSE_KEYS);
+    if (!date || date > task.cutoffDate || close === null || close <= 0 || seen.has(date)) return [];
+    seen.add(date);
+    const changePct = numberValue(record, CHANGE_KEYS);
+    return [{ date, close, ...(changePct === null ? {} : { changePct }) }];
+  }).sort((left, right) => left.date.localeCompare(right.date)).slice(-90);
+
+  const markdown = marketPointsFromMarkdown(output, task);
+  const points = structuredPoints.length >= 2 ? structuredPoints : markdown.points.sort((left, right) => left.date.localeCompare(right.date));
+  return points.length >= 2 ? { sourceLabel: "iFinD A股数据 MCP · 日频历史行情", points, ...(markdown.nonTradingDates.length ? { nonTradingDates: markdown.nonTradingDates } : {}), capturedAt } : undefined;
+}
+
+export async function runIFindTool(tool: AgentToolName, task: ResearchTask): Promise<{ trace: AgentToolTrace; output: string; candidates: EvidenceItem[]; marketSeries?: MarketSeries }> {
   const call = toolCallsFor(task)[tool];
   const token = process.env.IFIND_MCP_TOKEN;
   const url = serverUrl(call.target);
@@ -244,7 +327,9 @@ export async function runIFindTool(tool: AgentToolName, task: ResearchTask): Pro
     const result = await client.callTool({ name: call.tool, arguments: call.arguments }, { timeout: 15_000 });
     const output = textFromResult(result.content);
     const candidates = extractMcpEvidence(output, tool, task, capturedAt);
-    return { trace: { tool, source, status: "完成", capturedAt, summary: `${call.tool} 已返回 ${output.length} 字符的可审阅结果；代码提取 ${candidates.length} 条候选材料。`, excerpt: resultExcerpt(output) }, output, candidates };
+    const marketSeries = tool === "get_historical_market_context" ? extractMarketSeries(output, task, capturedAt) : undefined;
+    const marketSummary = marketSeries ? `；提取 ${marketSeries.points.length} 个日频行情点` : "";
+    return { trace: { tool, source, status: "完成", capturedAt, summary: `${call.tool} 已返回 ${output.length} 字符的可审阅结果；代码提取 ${candidates.length} 条候选材料${marketSummary}。`, excerpt: resultExcerpt(output) }, output, candidates, marketSeries };
   } catch {
     return { trace: { tool, source, status: "失败", capturedAt, summary: "MCP 调用失败；本次不会据此生成正式结论。" }, output: "工具调用失败，未取得数据。", candidates: [] };
   } finally {

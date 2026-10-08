@@ -83,6 +83,21 @@ export type AgentToolTrace = {
   excerpt?: string;
 };
 
+export type MarketPoint = {
+  date: string;
+  close: number;
+  changePct?: number;
+  volume?: number;
+  amount?: number;
+};
+
+export type MarketSeries = {
+  sourceLabel: string;
+  points: MarketPoint[];
+  nonTradingDates?: string[];
+  capturedAt: string;
+};
+
 export type AgentRun = {
   id: string;
   status: AgentRunStatus;
@@ -92,6 +107,7 @@ export type AgentRun = {
   toolCalls: AgentToolTrace[];
   proposal: AgentProposal | null;
   evidence?: EvidenceItem[];
+  marketSeries?: MarketSeries;
 };
 
 export type ResearchTask = {
