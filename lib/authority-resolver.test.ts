@@ -39,7 +39,8 @@ describe("authority source resolver", () => {
       sourceUrl: originalUrl,
       sourceTier: "交易所/公司公告",
       publisher: "上海证券交易所披露",
-      sourceLabel: "Exa 自动匹配的权威原文 · 待用户核对",
+      sourceLabel: "Exa 已核验匹配的权威原文",
+      reviewOutcome: "已自动核验",
     });
     expect(resolved.trace.summary).toContain("1 条候选材料");
   });

@@ -52,6 +52,13 @@ function matchesCandidate(item: EvidenceItem, result: SearchResult) {
   return matches >= Math.min(2, tokens.length) && (dateMatches || matches >= Math.min(4, tokens.length));
 }
 
+function originalQuote(result: SearchResult) {
+  const content = [result.text, ...(result.highlights ?? [])]
+    .filter((value): value is string => typeof value === "string" && value.trim().length >= 30)
+    .map((value) => value.replace(/\s+/g, " ").trim())[0];
+  return content ? content.slice(0, 280) : "";
+}
+
 function candidateQuery(task: ResearchTask, item: EvidenceItem) {
   return `"${item.title}" ${task.companyQuery} ${task.eventQuery} ${item.disclosedAt} 公告`;
 }
@@ -81,9 +88,10 @@ async function findAuthoritySource(client: AuthoritySearchClient, task: Research
 
   const original = await client.getContents([result.url], { text: true, highlights: true });
   const originalResult = original.results?.[0];
-  if (!originalResult || !matchesCandidate(item, originalResult)) return null;
+  const quote = originalResult ? originalQuote(originalResult) : "";
+  if (!originalResult || !quote || !matchesCandidate(item, originalResult)) return null;
   const tier = officialTier(result.url);
-  return tier ? { url: result.url, tier } : null;
+  return tier ? { url: result.url, tier, quote } : null;
 }
 
 export async function resolveAuthoritySources(
@@ -112,7 +120,7 @@ export async function resolveAuthoritySources(
         continue;
       }
       resolved += 1;
-      output.push({ ...item, publisher: authorityPublisher(authority.url, authority.tier), sourceUrl: authority.url, sourceLabel: "Exa 自动匹配的权威原文 · 待用户核对", sourceTier: authority.tier, updatedAt: capturedAt });
+      output.push({ ...item, publisher: authorityPublisher(authority.url, authority.tier), sourceUrl: authority.url, sourceLabel: "Exa 已核验匹配的权威原文", sourceTier: authority.tier, quote: authority.quote, reviewOutcome: "已自动核验", updatedAt: capturedAt });
     } catch {
       output.push(item);
     }
@@ -125,7 +133,7 @@ export async function resolveAuthoritySources(
       source: "Exa 权威原文检索",
       status: "完成",
       capturedAt,
-      summary: resolved ? `已为 ${resolved} 条候选材料自动匹配权威原文；匹配结果仍需打开链接核对。` : "未找到可同时匹配标题、日期与官方域名的权威原文；候选材料保持原状。",
+      summary: resolved ? `已为 ${resolved} 条候选材料匹配并核验权威原文，已自动写入证据时间线。` : "未找到可同时匹配标题、日期、正文与官方域名的权威原文；候选材料保持原状。",
     },
   };
 }

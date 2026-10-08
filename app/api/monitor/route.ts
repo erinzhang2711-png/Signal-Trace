@@ -239,7 +239,7 @@ export async function POST(request: Request) {
     traces.push(authorityResolution.trace);
     const resolvedEvidence = authorityResolution.evidence;
     const hasFormalEvidence = resolvedEvidence.some((item) => Boolean(item.sourceUrl && item.quote && (item.sourceTier === "交易所/公司公告" || item.sourceTier === "公司投资者关系")));
-    const proposal = modelEvidence.length === 0 ? {
+    let proposal = modelEvidence.length === 0 ? {
       ...proposalFrom(result),
       proposedState: "待人工核验" as const,
       confidence: "低" as const,
@@ -255,8 +255,12 @@ export async function POST(request: Request) {
       requiresReview: true,
       conflict: "Agent 草案未提供带原文短引的正式来源；不能建立或升级正式事件。",
     };
+    const automaticallyVerified = resolvedEvidence.some((item) => item.reviewOutcome === "已自动核验");
+    if (automaticallyVerified && proposal.eventMatch === "同一事件" && proposal.contentKind === "事实" && !proposal.conflict) {
+      proposal = { ...proposal, requiresReview: false };
+    }
     const decision = result.decision as string;
-    const status: AgentRun["status"] = modelEvidence.length === 0 || decision === "待人工核验" || proposal.requiresReview ? "待人工核验" : decision === "无状态变化" ? "无状态变化" : "待用户确认";
+    const status: AgentRun["status"] = (modelEvidence.length === 0 && !automaticallyVerified) || (decision === "待人工核验" && !automaticallyVerified) || proposal.requiresReview ? "待人工核验" : decision === "无状态变化" ? "无状态变化" : "待用户确认";
     const defaultGroups = buildTimelineGroups(resolvedEvidence);
     const narrative = await summarizeTimelineWithLLM(runtime, payload.data.task, resolvedEvidence, defaultGroups);
     const run: AgentRun = { id: `run-${Date.now()}`, status, startedAt, endedAt: new Date().toISOString(), stopReason: resolvedEvidence.length === 0 ? "未提取到可构建同一事件时间线的证据节点。" : modelEvidence.length === 0 ? "已展示代码提取的候选时间线；等待 Agent 归并与人工核验。" : (result.stopReason as string) || "已完成有限工具调用。", toolCalls: traces, proposal, evidence: resolvedEvidence, marketSeries, eventName: narrative?.eventName || canonicalEventName(payload.data.task, resolvedEvidence), timelineGroups: narrative?.groups || defaultGroups };

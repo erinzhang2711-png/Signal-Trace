@@ -18,7 +18,7 @@ export type EvidenceItem = {
   summary: string;
   impact: string;
   statusEffect?: EventState;
-  reviewOutcome?: "支持当前结论" | "待人工核验" | "已保留候选" | "更正旧结论" | "已过期";
+  reviewOutcome?: "支持当前结论" | "已自动核验" | "待人工核验" | "已保留候选" | "更正旧结论" | "已过期";
 };
 
 export type MarketReaction = {
