@@ -125,6 +125,13 @@ function ResearchWorkspace() {
   </main>;
 }
 
+type BatchVerificationResult = {
+  id: string;
+  title: string;
+  outcome: EvidenceItem["reviewOutcome"] | "未能核验";
+  reason: string;
+};
+
 function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: ResearchTask; run: AgentRun; onRerun: () => void; onRunChange: (run: AgentRun) => void }) {
   const evidence = useMemo<EvidenceItem[]>(() => run.evidence?.length ? [...run.evidence].sort((left, right) => left.disclosedAt.localeCompare(right.disclosedAt)) : [], [run]);
   const timelineGroups = useMemo(() => run.timelineGroups?.length ? run.timelineGroups : buildTimelineGroups(evidence), [evidence, run.timelineGroups]);
@@ -135,6 +142,7 @@ function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: Research
   const [batchSelection, setBatchSelection] = useState<Set<string>>(new Set());
   const [batchReviewing, setBatchReviewing] = useState(false);
   const [batchReviewNote, setBatchReviewNote] = useState<string | null>(null);
+  const [batchReviewResults, setBatchReviewResults] = useState<BatchVerificationResult[]>([]);
   const [selectedMarketSeries, setSelectedMarketSeries] = useState<MarketSeries | undefined>();
   const [marketLoading, setMarketLoading] = useState(false);
   const eventName = run.eventName || canonicalEventName(task, evidence);
@@ -168,22 +176,30 @@ function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: Research
     if (items.length === 0 || batchReviewing) return;
     setBatchReviewing(true);
     setBatchReviewNote(null);
+    setBatchReviewResults([]);
     const verified = await Promise.all(items.map(async (item) => {
       try {
         const response = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: item.title, publisher: item.publisher, sourceUrl: item.sourceUrl, disclosedAt: item.disclosedAt, body: item.quote || item.summary, task }) });
-        const data = (await response.json()) as { proposal?: AgentProposal };
-        if (!response.ok || !data.proposal) return { id: item.id, outcome: "待人工核验" as const };
+        const data = (await response.json()) as { proposal?: AgentProposal; error?: string };
+        if (!response.ok || !data.proposal) return { id: item.id, title: item.title, outcome: "未能核验" as const, reason: data.error || "核验服务未返回结构化结论。" };
         const state = nextState("待人工核验", data.proposal, { title: item.title, publisher: item.publisher, sourceUrl: item.sourceUrl, disclosedAt: item.disclosedAt, body: item.quote || item.summary });
-        return { id: item.id, outcome: state === "待人工核验" ? "待人工核验" as const : "支持当前结论" as const };
+        const outcome = state === "待人工核验" ? "待人工核验" as const : "支持当前结论" as const;
+        const reason = outcome === "支持当前结论"
+          ? `同一事件、事实属性与来源条件通过；建议状态：${state}。`
+          : data.proposal.rationale || "材料尚未同时满足同一事件、事实属性与权威来源条件。";
+        return { id: item.id, title: item.title, outcome, reason };
       } catch {
-        return { id: item.id, outcome: "待人工核验" as const };
+        return { id: item.id, title: item.title, outcome: "未能核验" as const, reason: "请求失败；没有写入任何核验结论。" };
       }
     }));
-    const outcomeById = new Map(verified.map((item) => [item.id, item.outcome]));
-    const nextEvidence = evidence.map((item) => outcomeById.has(item.id) ? { ...item, reviewOutcome: outcomeById.get(item.id) } : item);
+    const outcomeById = new Map(verified.filter((item) => item.outcome !== "未能核验").map((item) => [item.id, item.outcome]));
+    const nextEvidence = evidence.map((item) => outcomeById.has(item.id) ? { ...item, reviewOutcome: outcomeById.get(item.id) as EvidenceItem["reviewOutcome"] } : item);
     onRunChange({ ...run, evidence: nextEvidence, timelineGroups: buildTimelineGroups(nextEvidence) });
     const supported = verified.filter((item) => item.outcome === "支持当前结论").length;
-    setBatchReviewNote(`已完成 ${verified.length} 条独立核验：${supported} 条来源与事实条件通过，${verified.length - supported} 条仍需人工核验；未自动改变正式事件状态。`);
+    const manual = verified.filter((item) => item.outcome === "待人工核验").length;
+    const unavailable = verified.filter((item) => item.outcome === "未能核验").length;
+    setBatchReviewResults(verified);
+    setBatchReviewNote(`本次请求：${verified.length} 条；支持当前结论 ${supported} 条，仍需人工核验 ${manual} 条，未能核验 ${unavailable} 条。正式事件状态不会被批量操作自动改写。`);
     setBatchSelection(new Set());
     setBatchReviewing(false);
   }
@@ -217,7 +233,7 @@ function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: Research
 
   return <main>
     <header className="topbar"><div className="topbar-left"><div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div><a className="topbar-start" href="/">← 开始新研究</a></div><div className="topbar-meta">金融事件证据 Agent <span className="divider" /> 不构成投资建议</div></header>
-    <section className="hero"><div><p className="eyebrow">{canBuildTimeline ? "EVIDENCE-FIRST EVENT INTELLIGENCE" : "CANDIDATE EVENT RESEARCH"}</p><h1>{eventName}</h1><p className="subtitle">从首次可得披露回溯至 {task.cutoffDate} 的研究快照</p></div><div className="research-context"><div className="target-stack"><span>研究标的</span><div className="security-labels">{securities.map((security) => <b key={`${security.name}-${security.code ?? ""}`}><strong>{security.name}</strong>{security.code ? <small>{security.code}</small> : <em>待代码确认</em>}</b>)}</div></div><button className={`follow-button ${following ? "is-following" : ""}`} onClick={toggleFollowing}>{following ? "✓ 已关注" : "+ 关注"}</button><details className="hero-agent"><summary>Agent 运行 · {run.status} · {run.toolCalls.length} 项</summary><div className="hero-agent-content"><button className="primary-button" onClick={onRerun}>重新运行本次研究</button><AgentRunPanel run={run} task={task} /></div></details></div></section>
+    <section className="hero"><div><p className="eyebrow">{canBuildTimeline ? "EVIDENCE-FIRST EVENT INTELLIGENCE" : "CANDIDATE EVENT RESEARCH"}</p><div className="event-title-row"><h1>{eventName}</h1><button className={`follow-button ${following ? "is-following" : ""}`} onClick={toggleFollowing}>{following ? "✓ 已关注" : "+ 关注"}</button></div><p className="subtitle">从首次可得披露回溯至 {task.cutoffDate} 的研究快照</p></div><div className="research-context"><div className="target-stack"><span>研究标的</span><div className="security-labels">{securities.map((security) => <b key={`${security.name}-${security.code ?? ""}`}><strong>{security.name}</strong>{security.code ? <small>{security.code}</small> : <em>待代码确认</em>}</b>)}</div></div><details className="hero-agent"><summary>Agent 运行 · {run.status} · {run.toolCalls.length} 项</summary><div className="hero-agent-content"><button className="primary-button" onClick={onRerun}>重新运行本次研究</button><AgentRunPanel run={run} task={task} /></div></details></div></section>
     <section className="dashboard">
       <aside className="left-column">
         <MarketChart series={selectedMarketSeries} selected={selected} loading={marketLoading} />
@@ -227,6 +243,7 @@ function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: Research
         <div className="timeline-header"><div><div className="panel-label">{canBuildTimeline ? "证据时间线" : "候选研究时间线"}</div><h2>事件生命周期</h2><p className="timeline-guide">左侧看状态与节点行情；中间按阶段阅读具体进展；右侧核对选中材料与运行记录。</p></div><span>{timelineGroups.length} 个阶段 · {evidence.length} 条材料</span></div>
         <div className="timeline-toolbar"><span>勾选多个候选节点后，可一次生成独立核验结论。</span><button className="batch-review-button" disabled={batchSelection.size === 0 || batchReviewing} onClick={() => void batchVerify()}>{batchReviewing ? "正在核验…" : `批量核验${batchSelection.size ? `（${batchSelection.size}）` : ""}`}</button></div>
         {batchReviewNote && <div className="batch-review-note">{batchReviewNote}</div>}
+        {batchReviewResults.length > 0 && <details className="batch-review-results" open><summary>查看 {batchReviewResults.length} 条逐项核验结果</summary><div>{batchReviewResults.map((result) => <button key={result.id} className={`batch-result batch-result-${result.outcome === "支持当前结论" ? "supported" : result.outcome === "待人工核验" ? "manual" : "unavailable"}`} onClick={() => { setSelectedId(result.id); setReviewing(false); }}><span>{result.outcome}</span><b>{result.title}</b><small>{result.reason}</small></button>)}</div></details>}
         <div className="legend"><span><i className="dot official" />交易所/公司公告</span><span><i className="dot ir" />投资者关系</span><span><i className="dot user" />媒体 / 待归并</span></div>
         <div className="timeline research-lifecycle">{timelineGroups.length ? timelineGroups.map((group) => { const representative = evidence.find((item) => item.id === group.representativeEvidenceId); if (!representative) return null; return <div className={`timeline-row ${selected?.id === representative.id ? "selected" : ""}`} key={group.id}><label className="timeline-select"><input type="checkbox" checked={batchSelection.has(representative.id)} onChange={() => toggleBatchSelection(representative.id)} aria-label={`选择 ${group.title} 进行批量核验`} /></label><button className="timeline-item" onClick={() => { setSelectedId(representative.id); setReviewing(false); }}><div className="date"><b>{group.dateLabel}</b><span>{group.sourceCount} 个来源</span></div><i className={`line-dot ${representative.sourceTier === "交易所/公司公告" ? "official" : representative.sourceTier === "公司投资者关系" ? "ir" : "user"}`} /><div className="timeline-copy"><div><span className="kind-tag">{timelineStageLabel(group.stage)}</span>{representative.reviewOutcome && <span className="review-mini">{representative.reviewOutcome}</span>}</div><h3>{group.title}</h3><p>{group.summary}</p><small>点击查看原文与当日市场窗口</small></div></button></div>; }) : <div className="timeline-empty">本次没有提取出同时匹配公司与事件关键词的材料。请补充公司代码、交易对手或更具体的事件名称后重新运行。</div>}</div>
       </section>
