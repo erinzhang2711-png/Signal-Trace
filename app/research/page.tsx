@@ -8,7 +8,6 @@ import { marketReactionForEvent, returnFrom } from "@/lib/market";
 import { buildTimelineGroups, canonicalEventName, timelineStageLabel } from "@/lib/timeline";
 import { marketIdentityForTask } from "@/lib/market-identity";
 import { researchTaskWarning } from "@/lib/task-validation";
-import { parseResearchTargets, targetStatusLabel, type ResearchTarget } from "@/lib/research-targets";
 import { followedEventId, readWatchlist, WATCHLIST_STORAGE_KEY, type FollowedEvent } from "@/lib/watchlist";
 import type { AgentProposal, AgentRun, EvidenceItem, EventState, ImportedMaterial, MarketSeries, ResearchTask } from "@/lib/types";
 
@@ -25,6 +24,14 @@ const stateTone: Record<EventState, string> = {
 
 function blankMaterial(): ImportedMaterial {
   return { title: "", publisher: "", sourceUrl: "", disclosedAt: new Date().toISOString().slice(0, 10), body: "" };
+}
+
+function securityLabels(companyQuery: string) {
+  return companyQuery.split(/[、，,]/).map((part) => {
+    const name = part.match(/[\u4e00-\u9fa5]{2,}|[A-Za-z]{2,}/)?.[0] ?? part.trim();
+    const code = part.match(/\b\d{6}\b/)?.[0];
+    return { name, code };
+  }).filter((item) => item.name);
 }
 
 function isFormalSource(material: Pick<ImportedMaterial, "publisher" | "sourceUrl">) {
@@ -64,7 +71,6 @@ function ResearchWorkspace() {
     eventQuery: searchParams.get("event")?.trim() ?? "",
     cutoffDate: searchParams.get("cutoff")?.trim() ?? "",
   }), [searchParams]);
-  const researchTargets = useMemo(() => parseResearchTargets(searchParams.get("targets"), task.companyQuery), [searchParams, task.companyQuery]);
   const [run, setRun] = useState<AgentRun | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -130,7 +136,7 @@ function ResearchWorkspace() {
     if (run) window.localStorage.setItem(storageKey, JSON.stringify(run));
   }, [run, storageKey]);
 
-  if (run) return <ResearchDashboard task={task} targets={researchTargets} run={run} onRerun={() => void runResearch()} onRunChange={setRun} />;
+  if (run) return <ResearchDashboard task={task} run={run} onRerun={() => void runResearch()} onRunChange={setRun} />;
 
   return <main>
     <header className="topbar">
@@ -156,7 +162,7 @@ type BatchVerificationResult = {
   reason: string;
 };
 
-function ResearchDashboard({ task, targets, run, onRerun, onRunChange }: { task: ResearchTask; targets: ResearchTarget[]; run: AgentRun; onRerun: () => void; onRunChange: (run: AgentRun) => void }) {
+function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: ResearchTask; run: AgentRun; onRerun: () => void; onRunChange: (run: AgentRun) => void }) {
   const evidence = useMemo<EvidenceItem[]>(() => run.evidence?.length ? [...run.evidence].sort((left, right) => left.disclosedAt.localeCompare(right.disclosedAt)) : [], [run]);
   const timelineGroups = useMemo(() => run.timelineGroups?.length ? run.timelineGroups : buildTimelineGroups(evidence), [evidence, run.timelineGroups]);
   const canBuildTimeline = run.status === "待用户确认" && evidence.some((item) => item.sourceUrl && item.quote);
@@ -170,7 +176,7 @@ function ResearchDashboard({ task, targets, run, onRerun, onRunChange }: { task:
   const [selectedMarketSeries, setSelectedMarketSeries] = useState<MarketSeries | undefined>();
   const [marketLoading, setMarketLoading] = useState(false);
   const eventName = run.eventName || canonicalEventName(task, evidence);
-  const securities = targets;
+  const securities = securityLabels(task.companyQuery);
   const followId = followedEventId(task);
 
   useEffect(() => {
@@ -259,7 +265,7 @@ function ResearchDashboard({ task, targets, run, onRerun, onRunChange }: { task:
 
   return <main>
     <header className="topbar"><div className="topbar-left"><div className="brand"><span className="brand-mark">S</span><span>SignalTrace</span><em>证见</em></div><a className="topbar-start" href="/">← 开始新研究</a></div><div className="topbar-meta">金融事件证据 Agent <span className="divider" /> 不构成投资建议</div></header>
-    <section className="hero"><div><p className="eyebrow">{canBuildTimeline ? "EVIDENCE-FIRST EVENT INTELLIGENCE" : "CANDIDATE EVENT RESEARCH"}</p><div className="event-title-row"><h1>{eventName}</h1><button className={`follow-button ${following ? "is-following" : ""}`} onClick={toggleFollowing}>{following ? "✓ 已关注" : "+ 关注"}</button></div><p className="subtitle">从首次可得披露回溯至 {task.cutoffDate} 的研究快照</p></div><div className="research-context"><div className="target-stack"><span>研究标的</span><div className="security-labels">{securities.map((security) => <b key={security.id}><strong>{security.name}</strong><small>{targetStatusLabel(security)}</small></b>)}</div></div><details className="hero-agent"><summary>Agent 运行 · {run.status} · {run.toolCalls.length} 项</summary><div className="hero-agent-content"><button className="primary-button" onClick={onRerun}>重新运行本次研究</button><AgentRunPanel run={run} task={task} /></div></details></div></section>
+    <section className="hero"><div><p className="eyebrow">{canBuildTimeline ? "EVIDENCE-FIRST EVENT INTELLIGENCE" : "CANDIDATE EVENT RESEARCH"}</p><div className="event-title-row"><h1>{eventName}</h1><button className={`follow-button ${following ? "is-following" : ""}`} onClick={toggleFollowing}>{following ? "✓ 已关注" : "+ 关注"}</button></div><p className="subtitle">从首次可得披露回溯至 {task.cutoffDate} 的研究快照</p></div><div className="research-context"><div className="target-stack"><span>研究标的</span><div className="security-labels">{securities.map((security) => <b key={`${security.name}-${security.code ?? ""}`}><strong>{security.name}</strong>{security.code ? <small>{security.code}</small> : <em>代码待确认</em>}</b>)}</div></div><details className="hero-agent"><summary>Agent 运行 · {run.status} · {run.toolCalls.length} 项</summary><div className="hero-agent-content"><button className="primary-button" onClick={onRerun}>重新运行本次研究</button><AgentRunPanel run={run} task={task} /></div></details></div></section>
     <section className="dashboard">
       <aside className="left-column">
         <MarketChart series={selectedMarketSeries} selected={selected} loading={marketLoading} />
