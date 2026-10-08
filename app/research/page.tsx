@@ -39,8 +39,8 @@ function isFormalSource(material: Pick<ImportedMaterial, "publisher" | "sourceUr
   return tier === "交易所/公司公告" || tier === "公司投资者关系";
 }
 
-function visibleStageLabel(item: EvidenceItem, stage: Parameters<typeof timelineStageLabel>[0]) {
-  return item.sourceTier === "媒体报道" || item.sourceTier === "用户导入" ? "候选进展" : timelineStageLabel(stage);
+function requiresOriginalVerification(item: EvidenceItem) {
+  return !item.sourceUrl || !["交易所/公司公告", "公司投资者关系"].includes(item.sourceTier);
 }
 
 async function requestAnalysis(material: ImportedMaterial, task: ResearchTask): Promise<AgentProposal> {
@@ -159,15 +159,6 @@ function ResearchWorkspace() {
   </main>;
 }
 
-type StageDraft = {
-  groupId: string;
-  representativeId: string;
-  dateLabel: string;
-  stage: string;
-  title: string;
-  sources: EvidenceItem[];
-};
-
 function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: ResearchTask; run: AgentRun; onRerun: () => void; onRunChange: (run: AgentRun) => void }) {
   const evidence = useMemo<EvidenceItem[]>(() => run.evidence?.length ? [...run.evidence].sort((left, right) => left.disclosedAt.localeCompare(right.disclosedAt)) : [], [run]);
   const timelineGroups = useMemo(() => run.timelineGroups?.length ? run.timelineGroups : buildTimelineGroups(evidence), [evidence, run.timelineGroups]);
@@ -175,9 +166,6 @@ function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: Research
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [following, setFollowing] = useState(false);
   const [reviewing, setReviewing] = useState(false);
-  const [batchSelection, setBatchSelection] = useState<Set<string>>(new Set());
-  const [batchReviewNote, setBatchReviewNote] = useState<string | null>(null);
-  const [stageDrafts, setStageDrafts] = useState<StageDraft[]>([]);
   const [selectedMarketSeries, setSelectedMarketSeries] = useState<MarketSeries | undefined>();
   const [marketLoading, setMarketLoading] = useState(false);
   const eventName = run.eventName || canonicalEventName(task, evidence);
@@ -196,27 +184,6 @@ function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: Research
       ? [{ id: followId, eventName, task, securities, followedAt: new Date().toISOString() } satisfies FollowedEvent, ...current.filter((item) => item.id !== followId)]
       : current.filter((item) => item.id !== followId);
     window.localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(updated));
-  }
-
-  function toggleBatchSelection(id: string) {
-    setBatchSelection((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }
-
-  function createStageDrafts() {
-    const drafts = timelineGroups.flatMap((group) => {
-      if (!batchSelection.has(group.representativeEvidenceId)) return [];
-      const sources = evidence.filter((item) => group.evidenceIds.includes(item.id));
-      return sources.length ? [{ groupId: group.id, representativeId: group.representativeEvidenceId, dateLabel: group.dateLabel, stage: timelineStageLabel(group.stage), title: group.title, sources }] : [];
-    });
-    if (drafts.length === 0) return;
-    setStageDrafts(drafts);
-    const directSources = drafts.flatMap((draft) => draft.sources).filter((item) => item.sourceUrl).length;
-    setBatchReviewNote(`已按 ${drafts.length} 个阶段归并 ${drafts.reduce((count, draft) => count + draft.sources.length, 0)} 条材料，其中 ${directSources} 条附可打开的原文链接。以下是候选阶段草案；补齐原文并逐条确认后，才会写入正式时间线。`);
-    setBatchSelection(new Set());
   }
 
   const selected = evidence.find((item) => item.id === selectedId) ?? evidence[0];
@@ -258,14 +225,12 @@ function ResearchDashboard({ task, run, onRerun, onRunChange }: { task: Research
       </aside>
       <section className="center-column panel">
         <div className="timeline-header"><div><div className="panel-label">{canBuildTimeline ? "证据时间线" : "候选研究时间线"}</div><h2>事件生命周期</h2><p className="timeline-guide">左侧看状态与节点行情；中间按阶段阅读具体进展；右侧核对选中材料与运行记录。</p></div><span>{timelineGroups.length} 个阶段 · {evidence.length} 条材料</span></div>
-        <div className="timeline-toolbar"><span>勾选阶段后，将已检索材料归并成候选时间线草案；不会伪造原文，也不会自动改写正式事件。</span><button className="batch-review-button" disabled={batchSelection.size === 0} onClick={createStageDrafts}>{`生成阶段归并草案${batchSelection.size ? `（${batchSelection.size}）` : ""}`}</button></div>
-        {batchReviewNote && <div className="batch-review-note">{batchReviewNote}</div>}
-        {stageDrafts.length > 0 && <details className="batch-review-results" open><summary>查看 {stageDrafts.length} 个候选阶段草案</summary><div>{stageDrafts.map((draft) => <button key={draft.groupId} className="batch-result batch-result-draft" onClick={() => { setSelectedId(draft.representativeId); setReviewing(false); }}><span>候选草案</span><b>{draft.dateLabel} · {draft.stage} · {draft.title}</b><small>{draft.sources.map((source) => source.sourceUrl ? `${source.publisher}（有原文）` : `${source.publisher}（待补原文）`).join("；")}</small></button>)}</div></details>}
+        <div className="timeline-toolbar"><span>点击阶段查看全部来源；出现“待原文核验”时，在右侧补充交易所或公司原文，再生成并确认核验结论。</span></div>
         <div className="legend"><span><i className="dot official" />交易所/公司公告</span><span><i className="dot ir" />投资者关系</span><span><i className="dot user" />媒体 / 待归并</span></div>
-        <div className="timeline research-lifecycle">{timelineGroups.length ? timelineGroups.map((group) => { const representative = evidence.find((item) => item.id === group.representativeEvidenceId); if (!representative) return null; return <div className={`timeline-row ${selected?.id === representative.id ? "selected" : ""}`} key={group.id}><label className="timeline-select"><input type="checkbox" checked={batchSelection.has(representative.id)} onChange={() => toggleBatchSelection(representative.id)} aria-label={`选择 ${group.title} 生成阶段归并草案`} /></label><button className="timeline-item" onClick={() => { setSelectedId(representative.id); setReviewing(false); }}><div className="date"><b>{group.dateLabel}</b><span>{group.sourceCount} 个来源</span></div><i className={`line-dot ${representative.sourceTier === "交易所/公司公告" ? "official" : representative.sourceTier === "公司投资者关系" ? "ir" : "user"}`} /><div className="timeline-copy"><div><span className="kind-tag">{visibleStageLabel(representative, group.stage)}</span>{representative.reviewOutcome && <span className="review-mini">{representative.reviewOutcome}</span>}</div><h3>{group.title}</h3><p>{group.summary}</p></div></button></div>; }) : <div className="timeline-empty">本次没有提取出同时匹配公司与事件关键词的材料。请补充公司代码、交易对手或更具体的事件名称后重新运行。</div>}</div>
+        <div className="timeline research-lifecycle">{timelineGroups.length ? timelineGroups.map((group) => { const representative = evidence.find((item) => item.id === group.representativeEvidenceId); if (!representative) return null; return <div className={`timeline-row ${selected?.id === representative.id ? "selected" : ""}`} key={group.id}><button className="timeline-item" onClick={() => { setSelectedId(representative.id); setReviewing(false); }}><div className="date"><b>{group.dateLabel}</b><span>{group.sourceCount} 个来源</span></div><i className={`line-dot ${representative.sourceTier === "交易所/公司公告" ? "official" : representative.sourceTier === "公司投资者关系" ? "ir" : "user"}`} /><div className="timeline-copy"><div><span className="kind-tag">{timelineStageLabel(group.stage)}</span>{requiresOriginalVerification(representative) && <span className="review-mini">待原文核验</span>}{representative.reviewOutcome && <span className="review-mini">{representative.reviewOutcome}</span>}</div><h3>{group.title}</h3><p>{group.summary}</p></div></button></div>; }) : <div className="timeline-empty">本次没有提取出同时匹配公司与事件关键词的材料。请补充公司代码、交易对手或更具体的事件名称后重新运行。</div>}</div>
       </section>
       <aside className="right-column">
-        <article className="panel evidence-card"><div className="panel-heading"><span>{canBuildTimeline ? "证据详情" : "候选详情"}</span><span className={`source-tag ${selected?.sourceTier === "交易所/公司公告" ? "official" : "user"}`}>{selected?.sourceTier ?? "待核验"}</span></div>{selected ? <><h3>{selected.title}</h3>{selected.quote && <blockquote>“{selected.quote}”</blockquote>}<p>{selected.impact}</p><dl><div><dt>发生时间</dt><dd>{selected.occurredAt}</dd></div><div><dt>披露时间</dt><dd>{selected.disclosedAt}</dd></div><div><dt>抓取时间</dt><dd>{selected.capturedAt.slice(0, 10)}</dd></div><div><dt>更新时间</dt><dd>{selected.updatedAt.slice(0, 10)}</dd></div><div><dt>来源</dt><dd>{selected.publisher}</dd></div></dl><small className="source-reference">{selected.sourceLabel}</small>{selected.sourceUrl ? <a href={selected.sourceUrl} target="_blank" rel="noreferrer">打开原文 ↗</a> : <span className="fine-print">当前材料暂无直达原文。</span>}{selectedGroupSources.length > 1 && <div className="stage-sources"><b>本阶段全部来源（{selectedGroupSources.length}）</b>{selectedGroupSources.map((source) => <div key={source.id}><span>{source.publisher} · {source.disclosedAt}</span>{source.sourceUrl ? <a href={source.sourceUrl} target="_blank" rel="noreferrer">打开原文 ↗</a> : <em>待补原文</em>}</div>)}</div>}{!canBuildTimeline && <button className="review-trigger" onClick={() => setReviewing((value) => !value)}>{reviewing ? "收起核验表单" : "核验此候选 →"}</button>}</> : <p className="fine-print">选择时间线节点后查看材料详情。</p>}</article>
+        <article className="panel evidence-card"><div className="panel-heading"><span>{canBuildTimeline ? "证据详情" : "候选详情"}</span><span className={`source-tag ${selected?.sourceTier === "交易所/公司公告" ? "official" : "user"}`}>{selected?.sourceTier ?? "待核验"}</span></div>{selected ? <><h3>{selected.title}</h3>{selected.quote && <blockquote>“{selected.quote}”</blockquote>}<p>{selected.impact}</p><dl><div><dt>发生时间</dt><dd>{selected.occurredAt}</dd></div><div><dt>披露时间</dt><dd>{selected.disclosedAt}</dd></div><div><dt>抓取时间</dt><dd>{selected.capturedAt.slice(0, 10)}</dd></div><div><dt>更新时间</dt><dd>{selected.updatedAt.slice(0, 10)}</dd></div><div><dt>来源</dt><dd>{selected.publisher}</dd></div></dl><small className="source-reference">{selected.sourceLabel}</small>{selected.sourceUrl ? <a href={selected.sourceUrl} target="_blank" rel="noreferrer">打开原文 ↗</a> : <span className="fine-print">当前材料暂无直达原文。</span>}{selectedGroupSources.length > 1 && <div className="stage-sources"><b>本阶段全部来源（{selectedGroupSources.length}）</b>{selectedGroupSources.map((source) => <div key={source.id}><span>{source.publisher} · {source.disclosedAt}</span>{source.sourceUrl ? <a href={source.sourceUrl} target="_blank" rel="noreferrer">打开原文 ↗</a> : <em>待补原文</em>}</div>)}</div>}{requiresOriginalVerification(selected) && <button className="review-trigger" onClick={() => setReviewing((value) => !value)}>{reviewing ? "收起人工核验" : "人工核验这条材料 →"}</button>}</> : <p className="fine-print">选择时间线节点后查看材料详情。</p>}</article>
         <article className="panel conclusion-card"><div className="panel-label">当前事件状态</div><div className="state-row"><span className={`status-pill ${stateTone[state]}`}>{state}</span><span className="version">{canBuildTimeline ? "正式草案" : "候选研究"}</span></div><p>{conclusion}</p><div className="risk-callout"><strong>{canBuildTimeline ? "风险提示" : "候选时间线"}</strong><span>{canBuildTimeline ? "候选材料不等于正式结论；未直达原文或未识别交易对手时，系统不会升级事件状态。" : "下方先展示可读的候选时间线；只有带原文、短引和同一事件匹配的节点，才可升格为正式事实。"}</span></div></article>
         {reviewing && selected && <CandidateReviewPanel task={task} run={run} selected={selected} onRunChange={onRunChange} onClose={() => setReviewing(false)} />}
       </aside>
